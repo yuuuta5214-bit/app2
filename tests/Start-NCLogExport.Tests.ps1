@@ -97,6 +97,23 @@ Describe 'NCLogExport.cmd' {
         Test-Path -LiteralPath (Join-Path $PSScriptRoot '..' 'tools' 'Start-NCLogExport.ps1') | Should -BeTrue
     }
 
+    It '部分文字列展開 (%VAR:~n,m%) は変数の定義を確認した「次の行」でのみ使う' {
+        # cmd.exe は行全体の %...% を if の評価前に展開する。未定義の変数に :~ を使うと
+        # 行が壊れて「コマンドの構文が誤っています」になる (v2.1 初版の不具合)。
+        $lines = [System.Text.Encoding]::ASCII.GetString($bytes) -split "\r\n"
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^\s*rem\b') {
+                $lines[$i] | Should -Not -Match '%' -Because "rem 行の % も展開される (行 $($i + 1))"
+                continue
+            }
+            foreach ($m in [regex]::Matches($lines[$i], '%(\w+):~')) {
+                $var = $m.Groups[1].Value
+                $lines[$i] | Should -Not -Match "(?i)\bif\s+(not\s+)?defined\s+$var\b" -Because "行 $($i + 1): 同じ行で defined 判定しても展開は先に行われる"
+                $lines[$i - 1] | Should -Match "(?i)^\s*if\s+not\s+defined\s+$var\s+goto\s" -Because "行 $($i + 1): 直前の行で未定義なら飛ばす必要がある"
+            }
+        }
+    }
+
     It 'パッケージの必須ファイル (モジュールを含む) を事前に確認する' {
         $text = [System.Text.Encoding]::ASCII.GetString($bytes)
         $text | Should -Match 'call :require "%~dp0NCLogTools\\NCLogTools\.psd1"'

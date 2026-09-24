@@ -42,9 +42,14 @@ call :require "%~dp0NCLogTools\NCLogTools.psd1"
 if not "%MISSING%"=="0" goto :missing
 
 rem --- Advanced use: first argument is a parameter name -> call the exporter directly.
+rem     cmd.exe expands the ARG1 substring for the WHOLE line before "if defined" is evaluated,
+rem     and an undefined VAR breaks the line ("The syntax of the command is incorrect").
+rem     So the substring is only used on a separate line after ARG1 is known to be defined.
 set "ARG1=%~1"
-if defined ARG1 if "%ARG1:~0,1%"=="-" goto :passthrough
+if not defined ARG1 goto :interactive
+if "%ARG1:~0,1%"=="-" goto :passthrough
 
+:interactive
 "%PWSH%" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%LAUNCHER%" %*
 exit /b %ERRORLEVEL%
 
