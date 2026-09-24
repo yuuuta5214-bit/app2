@@ -1,0 +1,17 @@
+root = true
+
+[*]
+end_of_line = crlf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# Windows PowerShell 5.1 は BOM のない UTF-8 を ANSI (CP932) として読むため、日本語を含むスクリプトは BOM 付きにする
+[*.{ps1,psm1,psd1,ps1xml}]
+charset = utf-8-bom
+indent_style = space
+indent_size = 4
+
+[*.{yml,yaml}]
+charset = utf-8
+indent_style = space
+indent_size = 2

@@ -1,0 +1,61 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Configuration>
+  <ViewDefinitions>
+    <View>
+      <Name>NCLog.Record</Name>
+      <ViewSelectedBy>
+        <TypeName>NCLog.Record</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>File</Label></TableColumnHeader>
+          <TableColumnHeader><Label>RecordNumber</Label><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>ADD_40_0 (%)</Label><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>ADD_21_0 (mm/min)</Label><Alignment>Right</Alignment></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><ScriptBlock>[System.IO.Path]::GetFileName($_.SourceFile)</ScriptBlock></TableColumnItem>
+              <TableColumnItem><PropertyName>RecordNumber</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Value40</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Value21</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+    <View>
+      <Name>NCLog.Statistic</Name>
+      <ViewSelectedBy>
+        <TypeName>NCLog.Statistic</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>File</Label></TableColumnHeader>
+          <TableColumnHeader><Label>Parameter</Label></TableColumnHeader>
+          <TableColumnHeader><Label>Unit</Label></TableColumnHeader>
+          <TableColumnHeader><Label>Count</Label><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>Minimum</Label><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>Maximum</Label><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>Average</Label><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>StdDev</Label><Alignment>Right</Alignment></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><ScriptBlock>[System.IO.Path]::GetFileName($_.SourceFile)</ScriptBlock></TableColumnItem>
+              <TableColumnItem><PropertyName>Parameter</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Unit</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Count</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Minimum</PropertyName><FormatString>{0:F3}</FormatString></TableColumnItem>
+              <TableColumnItem><PropertyName>Maximum</PropertyName><FormatString>{0:F3}</FormatString></TableColumnItem>
+              <TableColumnItem><PropertyName>Average</PropertyName><FormatString>{0:F3}</FormatString></TableColumnItem>
+              <TableColumnItem><PropertyName>StdDev</PropertyName><FormatString>{0:F3}</FormatString></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+  </ViewDefinitions>
+</Configuration>
