@@ -159,9 +159,8 @@
         }
 
         # 呼び出し元の -ErrorAction / -Verbose は優先度変数経由で Get-NCLogRecord に伝わる
-        foreach ($record in (Get-NCLogRecord @readerParams -MaxRecords $remaining)) {
-            $records.Add($record)
-        }
+        $batch = @(Get-NCLogRecord @readerParams -MaxRecords $remaining)
+        if ($batch.Count -gt 0) { $records.AddRange($batch) }
     }
 
     end {
@@ -181,11 +180,13 @@
         $columns = 'SourceFile', 'RecordNumber', 'Value40', 'Value21'
         $ic = [System.Globalization.CultureInfo]::InvariantCulture
 
+        # NCLog.Record は $columns の4プロパティだけをこの順で持つため、Select-Object は不要。
+        # (Select-Object はレコードあたり約 30us かかり、100万件で数十秒の差になる)
         $rendered = switch ($Format) {
             'Table' { $records | Format-Table -Property $columns -AutoSize }
-            'CSV' { $records | Select-Object -Property $columns | ConvertTo-Csv -NoTypeInformation }
-            'TSV' { $records | Select-Object -Property $columns | ConvertTo-Csv -NoTypeInformation -Delimiter "`t" }
-            'JSON' { $records | Select-Object -Property $columns | ConvertTo-Json -AsArray }
+            'CSV' { $records | ConvertTo-Csv -NoTypeInformation }
+            'TSV' { $records | ConvertTo-Csv -NoTypeInformation -Delimiter "`t" }
+            'JSON' { ConvertTo-Json -InputObject $records.ToArray() -Depth 2 }
             'Raw' {
                 foreach ($r in $records) {
                     [string]::Format($ic, '{0},{1},{2}', $r.RecordNumber, $r.Value40, $r.Value21)
