@@ -26,7 +26,8 @@
 - 同名の CSV がある場合は上書きするか確認します。
 - 統計情報 (件数・最小・最大・平均・標準偏差) も表示します。
 - PowerShell 7 が必要です。ない場合は案内が表示されます (`winget install --id Microsoft.PowerShell --source winget`)。
-- `NCLogExport.cmd` は `Export-NCLogValues.ps1` と同じフォルダに置いたまま使ってください。
+- **配布用 ZIP (`NCLogTools-<バージョン>.zip`) を丸ごと展開**して、展開したフォルダの `NCLogExport.cmd` を使ってください。`.cmd` だけをコピーしても動きません。
+  ZIP は `./build/New-NCLogToolsPackage.ps1` で作成できます (`dist/` に出力)。
 - コマンドラインで `-` から始まる引数を渡すと、`Export-NCLogValues.ps1` にそのまま渡します
   (例: `NCLogExport.cmd -Path C:\Logs\NCLog_*.BIN -Format JSON -OutputPath all.json`)。
 

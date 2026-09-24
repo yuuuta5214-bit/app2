@@ -8,6 +8,7 @@ BeforeDiscovery {
         Get-ChildItem -LiteralPath (Join-Path $root 'NCLogTools') -Recurse -Include '*.ps1', '*.psm1', '*.psd1' -File
         Get-Item -LiteralPath (Join-Path $root 'Export-NCLogValues.ps1')
         Get-ChildItem -LiteralPath (Join-Path $root 'tools') -Filter '*.ps1' -File
+        Get-ChildItem -LiteralPath (Join-Path $root 'build') -Filter '*.ps1' -File
     ) | ForEach-Object { @{ Path = $_.FullName; Name = $_.Name } }
     $script:hasAnalyzer = [bool](Get-Module -ListAvailable -Name PSScriptAnalyzer)
 }

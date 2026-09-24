@@ -97,6 +97,12 @@ Describe 'NCLogExport.cmd' {
         Test-Path -LiteralPath (Join-Path $PSScriptRoot '..' 'tools' 'Start-NCLogExport.ps1') | Should -BeTrue
     }
 
+    It 'パッケージの必須ファイル (モジュールを含む) を事前に確認する' {
+        $text = [System.Text.Encoding]::ASCII.GetString($bytes)
+        $text | Should -Match 'call :require "%~dp0NCLogTools\\NCLogTools\.psd1"'
+        $text | Should -Match '(?m)^:require\r?$'
+    }
+
     It '実行ポリシーの変更はプロセス単位のみ (-ExecutionPolicy 引数) で、恒久的な設定変更をしない' {
         $text = [System.Text.Encoding]::ASCII.GetString($bytes)
         $text | Should -Not -Match 'Set-ExecutionPolicy'

@@ -32,11 +32,14 @@ if not defined PWSH (
     exit /b 9009
 )
 
-rem --- Scripts must sit next to this file.
+rem --- All package files must sit next to this file.
 set "LAUNCHER=%~dp0tools\Start-NCLogExport.ps1"
 set "EXPORTER=%~dp0Export-NCLogValues.ps1"
-if not exist "%LAUNCHER%" goto :missing
-if not exist "%EXPORTER%" goto :missing
+set "MISSING=0"
+call :require "%LAUNCHER%"
+call :require "%EXPORTER%"
+call :require "%~dp0NCLogTools\NCLogTools.psd1"
+if not "%MISSING%"=="0" goto :missing
 
 rem --- Advanced use: first argument is a parameter name -> call the exporter directly.
 set "ARG1=%~1"
@@ -50,10 +53,23 @@ exit /b %ERRORLEVEL%
 exit /b %ERRORLEVEL%
 
 :missing
-echo [ERROR] Required script not found next to this file:
-echo           %LAUNCHER%
-echo           %EXPORTER%
-echo         Keep NCLogExport.cmd in the same folder as Export-NCLogValues.ps1.
+echo.
+echo         This tool needs the whole package, not only this .cmd file.
+echo         Download the package zip, extract ALL of it, and run
+echo         NCLogExport.cmd from the extracted folder. Required layout:
+echo.
+echo           NCLogExport.cmd
+echo           Export-NCLogValues.ps1
+echo           NCLogTools\    (folder)
+echo           tools\         (folder)
 echo.
 pause
 exit /b 2
+
+rem --- Subroutine: report a missing file (path is quoted so "&" and ")" are safe)
+:require
+if exist "%~1" exit /b 0
+if "%MISSING%"=="0" echo [ERROR] Required file not found:
+echo           "%~1"
+set "MISSING=1"
+exit /b 0
