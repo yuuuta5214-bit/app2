@@ -12,7 +12,25 @@
 - PowerShell 7.2 以上 (Windows 推奨。Linux / macOS でも動作)
 - テスト実行時のみ: Pester 5.5 以上、PSScriptAnalyzer (任意)
 
-## 使い方
+## いちばん簡単な使い方 (NCLogExport.cmd)
+
+エクスプローラーから使えるランチャーです。PowerShell の知識は不要です。
+
+| 操作 | 動作 |
+|---|---|
+| `NCLogExport.cmd` をダブルクリック | ファイル選択画面で .BIN を選ぶ (複数可) |
+| .BIN ファイルを `NCLogExport.cmd` にドラッグ＆ドロップ | そのファイルを変換 |
+| フォルダを `NCLogExport.cmd` にドラッグ＆ドロップ | フォルダ直下の .BIN をすべて変換 |
+
+- CSV は元ファイルと同じフォルダに「元のファイル名.csv」で保存されます (Excel でそのまま開けます)。
+- 同名の CSV がある場合は上書きするか確認します。
+- 統計情報 (件数・最小・最大・平均・標準偏差) も表示します。
+- PowerShell 7 が必要です。ない場合は案内が表示されます (`winget install --id Microsoft.PowerShell --source winget`)。
+- `NCLogExport.cmd` は `Export-NCLogValues.ps1` と同じフォルダに置いたまま使ってください。
+- コマンドラインで `-` から始まる引数を渡すと、`Export-NCLogValues.ps1` にそのまま渡します
+  (例: `NCLogExport.cmd -Path C:\Logs\NCLog_*.BIN -Format JSON -OutputPath all.json`)。
+
+## 使い方 (PowerShell)
 
 ```powershell
 Import-Module .\NCLogTools
