@@ -2,14 +2,17 @@
     NCLog Viewer の画面処理 (WPF)。Windows 専用。
 
     Show-NCLogViewer から呼ばれる内部関数群。画面に依存しない処理 (解析・統計・グラフ座標・
-    16進表示の行生成) は Private フォルダにあり、Pester で単体テストしている。
+    16進表示の行生成・出力ファイル名・一括 CSV 出力) は Private フォルダにあり、Pester で単体テストしている。
     このファイルは WPF の部品を操作するだけに留める。
 
     状態は $ctx (hashtable) に集約し、各関数へ -Context で渡す:
         $ctx.Window / $ctx.UI.<x:Name>       画面部品
-        $ctx.Bytes / $ctx.Data               読み込んだバイト列と解析結果 (New-NCLogViewData)
+        $ctx.Files                           開いているファイル (NCLogViewerFile の ObservableCollection)
+        $ctx.Current                         選択中のファイル (NCLogViewerFile。なければ $null)
+        $ctx.Data                            選択中のファイルの解析結果 (New-NCLogViewData)
         $ctx.HexList / $ctx.RecordList       DataGrid に渡した遅延生成リスト
         $ctx.ViewStart / $ctx.ViewEnd        グラフの表示範囲 (レコード番号)
+        $ctx.Suppress                        画面をプログラムから更新している間は $true (イベントの再入防止)
 #>
 
 function Start-NCLogViewerWindow {
@@ -23,7 +26,7 @@ function Start-NCLogViewerWindow {
         Justification = 'イベントハンドラーは WPF のシグネチャ (sender, e) で受ける。LiteralFilePath は ContentRendered のハンドラー内で使う')]
     [CmdletBinding()]
     param(
-        [AllowNull()][string]$LiteralFilePath,
+        [AllowNull()][AllowEmptyCollection()][string[]]$LiteralFilePath,
         [Parameter(Mandatory)][int]$HeaderSize,
         [Parameter(Mandatory)][int]$RecordSize,
         [Parameter(Mandatory)][int]$Value40Offset,
@@ -45,13 +48,19 @@ function Start-NCLogViewerWindow {
 
     $ui = @{}
     foreach ($name in @(
-            'MenuOpen', 'MenuExport', 'MenuExit', 'MenuAbout', 'OpenButton', 'ExportButton',
+            'MenuOpen', 'MenuRemove', 'MenuRemoveAll', 'MenuBatchExport', 'MenuExport', 'MenuExit',
+            'MenuShowHex', 'MenuShowInfo', 'MenuShowLayout', 'MenuHowTo', 'MenuAbout',
+            'OpenButton', 'ToolbarBatchExportButton', 'LayoutBar',
             'HeaderSizeBox', 'RecordSizeBox', 'Value40OffsetBox', 'Value21OffsetBox', 'ApplyLayoutButton', 'ResetLayoutButton',
-            'StatusText', 'SelectionText', 'MainTabs', 'RecordTab', 'HexTab', 'ChartTab', 'InfoTab',
+            'StatusText', 'SelectionText',
+            'FileGrid', 'AddButton', 'RemoveButton', 'FileCountText',
+            'NameGroup', 'SelectedFileText', 'LaserBox', 'WireBox', 'RatioBox', 'PickedText', 'OutputNameText',
+            'OutputDirBox', 'BrowseOutputDirButton', 'ClearOutputDirButton', 'BatchExportButton', 'BatchSummaryText',
+            'MainTabs', 'ChartTab', 'RecordTab', 'HexTab', 'InfoTab',
             'RecordJumpBox', 'RecordJumpButton', 'RecordGrid', 'HexGrid', 'OffsetBox', 'OffsetJumpButton', 'InspectorGrid',
             'RangeStartBox', 'RangeEndBox', 'RangeApplyButton', 'RangeResetButton', 'HoverText', 'AxisStartText', 'AxisEndText',
             'Chart40Canvas', 'Chart40MaxText', 'Chart40MinText', 'Chart21Canvas', 'Chart21MaxText', 'Chart21MinText',
-            'FileInfoGrid', 'StatisticsGrid', 'HeaderGrid'
+            'ChartEmptyText', 'FileInfoGrid', 'StatisticsGrid', 'HeaderGrid'
         )) {
         $element = $window.FindName($name)
         if ($null -eq $element) { throw "XAML に要素 '$name' がありません: $xamlPath" }
@@ -61,13 +70,15 @@ function Start-NCLogViewerWindow {
     $ctx = @{
         Window        = $window
         UI            = $ui
-        Bytes         = $null
+        Files         = [System.Collections.ObjectModel.ObservableCollection[object]]::new()
+        Current       = $null
         Data          = $null
         HexList       = $null
         RecordList    = $null
         ViewStart     = 0
         ViewEnd       = 0
         Drag          = $null
+        Suppress      = $false
         PendingOffset = 0L
         DefaultLayout = @{
             HeaderSize    = $HeaderSize
@@ -79,39 +90,72 @@ function Start-NCLogViewerWindow {
         Cursor21      = $null
     }
     Set-NCLogViewerLayoutText -Context $ctx -Layout $ctx.DefaultLayout
+    $ui.FileGrid.ItemsSource = $ctx.Files
 
     # --- イベント登録 -------------------------------------------------------------
     # ハンドラーはこの関数の中から ShowDialog で呼ばれるため、$ctx をそのまま参照できる。
     # 例外が WPF のメッセージループまで届くとプロセスが落ちるので、必ず Invoke-NCLogViewerAction を通す。
     $openHandler = { Invoke-NCLogViewerAction -Context $ctx -Action { Open-NCLogViewerFileDialog -Context $ctx } }
     $exportHandler = { Invoke-NCLogViewerAction -Context $ctx -Action { Export-NCLogViewerCsv -Context $ctx } }
+    $batchHandler = { Invoke-NCLogViewerAction -Context $ctx -Action { Export-NCLogViewerBatchCsv -Context $ctx } }
+    $removeHandler = { Invoke-NCLogViewerAction -Context $ctx -Action { Remove-NCLogViewerFile -Context $ctx } }
     $applyHandler = { Invoke-NCLogViewerAction -Context $ctx -Action { Update-NCLogViewerLayout -Context $ctx } }
+    $howToHandler = { Invoke-NCLogViewerAction -Context $ctx -Action { Show-NCLogViewerHowTo -Context $ctx } }
 
     $ui.MenuOpen.Add_Click($openHandler)
     $ui.OpenButton.Add_Click($openHandler)
+    $ui.AddButton.Add_Click($openHandler)
     $ui.MenuExport.Add_Click($exportHandler)
-    $ui.ExportButton.Add_Click($exportHandler)
+    $ui.MenuBatchExport.Add_Click($batchHandler)
+    $ui.BatchExportButton.Add_Click($batchHandler)
+    $ui.ToolbarBatchExportButton.Add_Click($batchHandler)
+    $ui.MenuRemove.Add_Click($removeHandler)
+    $ui.RemoveButton.Add_Click($removeHandler)
+    $ui.MenuRemoveAll.Add_Click({ Invoke-NCLogViewerAction -Context $ctx -Action { Remove-NCLogViewerFile -Context $ctx -All } })
     $ui.ApplyLayoutButton.Add_Click($applyHandler)
+    $ui.MenuHowTo.Add_Click($howToHandler)
     $ui.MenuExit.Add_Click({ $ctx.Window.Close() })
     $ui.MenuAbout.Add_Click({
             Invoke-NCLogViewerAction -Context $ctx -Action {
                 $module = Get-Module -Name NCLogTools
                 $version = if ($module) { $module.Version } else { '?' }
                 Show-NCLogViewerMessage -Context $ctx -Icon Information -Message (
-                    "NCLog Viewer (NCLogTools $version)`n`nワイヤレーザー3Dプリンターの NCLog バイナリ (.BIN) を閲覧します。`n" +
-                    "ファイルは読み取り専用で開き、変更しません。")
+                    "NCLog Viewer (NCLogTools $version)`n`nワイヤレーザー3Dプリンターの NCLog バイナリ (.BIN) を閲覧し、`n" +
+                    "ファイルごとに名前を付けて CSV に一括出力します。`n" +
+                    "BIN ファイルは読み取り専用で開き、変更しません。")
             }
         })
+
+    # [ツール] メニュー: 16進ダンプ・ファイル情報・レイアウト設定は必要なときだけ表示する
+    $ui.MenuShowHex.Add_Click({
+            Invoke-NCLogViewerAction -Context $ctx -Action {
+                Set-NCLogViewerToolTab -Context $ctx -Tab $ctx.UI.HexTab -Visible $ctx.UI.MenuShowHex.IsChecked
+            }
+        })
+    $ui.MenuShowInfo.Add_Click({
+            Invoke-NCLogViewerAction -Context $ctx -Action {
+                Set-NCLogViewerToolTab -Context $ctx -Tab $ctx.UI.InfoTab -Visible $ctx.UI.MenuShowInfo.IsChecked
+            }
+        })
+    $ui.MenuShowLayout.Add_Click({
+            $ctx.UI.LayoutBar.Visibility = if ($ctx.UI.MenuShowLayout.IsChecked) {
+                [System.Windows.Visibility]::Visible
+            }
+            else {
+                [System.Windows.Visibility]::Collapsed
+            }
+        })
+
     $ui.ResetLayoutButton.Add_Click({
             Invoke-NCLogViewerAction -Context $ctx -Action {
                 Set-NCLogViewerLayoutText -Context $ctx -Layout $ctx.DefaultLayout
-                if ($null -ne $ctx.Bytes) { Update-NCLogViewerLayout -Context $ctx }
+                if ($ctx.Files.Count -gt 0) { Update-NCLogViewerLayout -Context $ctx }
             }
         })
     foreach ($box in $ui.HeaderSizeBox, $ui.RecordSizeBox, $ui.Value40OffsetBox, $ui.Value21OffsetBox) {
         $box.Add_KeyDown({
                 param($s, $e)
-                if ($e.Key -eq [System.Windows.Input.Key]::Enter -and $null -ne $ctx.Bytes) {
+                if ($e.Key -eq [System.Windows.Input.Key]::Enter -and $ctx.Files.Count -gt 0) {
                     $e.Handled = $true
                     Invoke-NCLogViewerAction -Context $ctx -Action { Update-NCLogViewerLayout -Context $ctx }
                 }
@@ -121,18 +165,28 @@ function Start-NCLogViewerWindow {
     # ショートカットキー
     $window.Add_PreviewKeyDown({
             param($s, $e)
-            if ([System.Windows.Input.Keyboard]::Modifiers -ne [System.Windows.Input.ModifierKeys]::Control) { return }
-            if ($e.Key -eq [System.Windows.Input.Key]::O) {
+            $modifiers = [System.Windows.Input.Keyboard]::Modifiers
+            $control = [System.Windows.Input.ModifierKeys]::Control
+            $shift = [System.Windows.Input.ModifierKeys]::Shift
+            if ($e.Key -eq [System.Windows.Input.Key]::F1) {
                 $e.Handled = $true
-                Invoke-NCLogViewerAction -Context $ctx -Action { Open-NCLogViewerFileDialog -Context $ctx }
+                & $howToHandler
             }
-            elseif ($e.Key -eq [System.Windows.Input.Key]::E -and $null -ne $ctx.Data) {
+            elseif ($modifiers -eq $control -and $e.Key -eq [System.Windows.Input.Key]::O) {
                 $e.Handled = $true
-                Invoke-NCLogViewerAction -Context $ctx -Action { Export-NCLogViewerCsv -Context $ctx }
+                & $openHandler
+            }
+            elseif ($modifiers -eq $control -and $e.Key -eq [System.Windows.Input.Key]::E -and $null -ne $ctx.Data) {
+                $e.Handled = $true
+                & $exportHandler
+            }
+            elseif ($modifiers -eq ($control -bor $shift) -and $e.Key -eq [System.Windows.Input.Key]::E) {
+                $e.Handled = $true
+                & $batchHandler
             }
         })
 
-    # ドラッグ＆ドロップ (ファイル1つ)
+    # ドラッグ＆ドロップ (複数ファイル・フォルダ可)
     $window.Add_PreviewDragOver({
             param($s, $e)
             $e.Effects = if ($e.Data.GetDataPresent([System.Windows.DataFormats]::FileDrop)) {
@@ -147,18 +201,80 @@ function Start-NCLogViewerWindow {
             param($s, $e)
             Invoke-NCLogViewerAction -Context $ctx -Action {
                 $dropped = @($e.Data.GetData([System.Windows.DataFormats]::FileDrop))
-                if ($dropped.Count -eq 0) { return }
-                if ($dropped.Count -gt 1) {
-                    Show-NCLogViewerMessage -Context $ctx -Icon Warning -Message '一度に開けるのは1ファイルです。先頭のファイルを開きます。'
-                }
-                if ([System.IO.Directory]::Exists($dropped[0])) {
-                    throw [System.IO.IOException]::new("フォルダは開けません。.BIN ファイルをドロップしてください: $($dropped[0])")
-                }
-                Open-NCLogViewerFile -Context $ctx -LiteralFilePath $dropped[0]
+                if ($dropped.Count -gt 0) { Add-NCLogViewerFile -Context $ctx -Path ([string[]]$dropped) }
             }
         })
 
-    # ① レコード表
+    # ① ファイル一覧
+    $ui.FileGrid.Add_SelectionChanged({
+            if ($ctx.Suppress) { return }
+            Invoke-NCLogViewerAction -Context $ctx -Action {
+                $selected = $ctx.UI.FileGrid.SelectedItem
+                if ($null -ne $selected -and -not [object]::ReferenceEquals($selected, $ctx.Current)) {
+                    Select-NCLogViewerFile -Context $ctx -File $selected
+                }
+            }
+        })
+    $ui.FileGrid.Add_PreviewKeyDown({
+            param($s, $e)
+            if ($e.Key -eq [System.Windows.Input.Key]::Delete) {
+                $e.Handled = $true
+                & $removeHandler
+            }
+        })
+
+    # ②③ 出力ファイル名の入力。入力のたびに出力ファイル名と状態を計算し直す
+    $ui.LaserBox.Add_TextChanged({
+            if ($ctx.Suppress -or $null -eq $ctx.Current) { return }
+            Invoke-NCLogViewerAction -Context $ctx -Action {
+                $ctx.Current.LaserText = $ctx.UI.LaserBox.Text
+                Update-NCLogViewerFileList -Context $ctx
+            }
+        })
+    $ui.WireBox.Add_TextChanged({
+            if ($ctx.Suppress -or $null -eq $ctx.Current) { return }
+            Invoke-NCLogViewerAction -Context $ctx -Action {
+                $ctx.Current.WireText = $ctx.UI.WireBox.Text
+                Update-NCLogViewerFileList -Context $ctx
+            }
+        })
+    $ui.RatioBox.Add_TextChanged({
+            if ($ctx.Suppress -or $null -eq $ctx.Current) { return }
+            Invoke-NCLogViewerAction -Context $ctx -Action {
+                $ctx.Current.RatioText = $ctx.UI.RatioBox.Text
+                Update-NCLogViewerFileList -Context $ctx
+            }
+        })
+    # 割合で Enter → 次のファイルへ (続けて割合を入力できる)
+    $ui.RatioBox.Add_KeyDown({
+            param($s, $e)
+            if ($e.Key -ne [System.Windows.Input.Key]::Enter) { return }
+            $e.Handled = $true
+            Invoke-NCLogViewerAction -Context $ctx -Action { Select-NCLogViewerNextFile -Context $ctx }
+        })
+    foreach ($pair in @(@($ui.LaserBox, $ui.WireBox), @($ui.WireBox, $ui.RatioBox))) {
+        $next = $pair[1]
+        $pair[0].Add_KeyDown({
+                param($s, $e)
+                if ($e.Key -eq [System.Windows.Input.Key]::Enter) {
+                    $e.Handled = $true
+                    [void]$next.Focus()
+                    $next.SelectAll()
+                }
+            }.GetNewClosure())
+    }
+
+    # ④ 一括 CSV 出力の出力先
+    $ui.OutputDirBox.Add_TextChanged({
+            if ($ctx.Suppress) { return }
+            Invoke-NCLogViewerAction -Context $ctx -Action { Update-NCLogViewerFileList -Context $ctx }
+        })
+    $ui.BrowseOutputDirButton.Add_Click({
+            Invoke-NCLogViewerAction -Context $ctx -Action { Select-NCLogViewerOutputDirectory -Context $ctx }
+        })
+    $ui.ClearOutputDirButton.Add_Click({ $ctx.UI.OutputDirBox.Text = '' })
+
+    # レコード表
     $recordJump = {
         Invoke-NCLogViewerAction -Context $ctx -Action {
             if ($null -eq $ctx.RecordList) { return }
@@ -192,7 +308,8 @@ function Start-NCLogViewerWindow {
                 $row = $ctx.UI.RecordGrid.SelectedItem
                 if ($null -eq $row) { return }
                 $ctx.PendingOffset = $row.Offset + $ctx.Data.Value40Offset
-                $ctx.UI.MainTabs.SelectedItem = $ctx.UI.HexTab
+                # 16進ダンプを非表示にしていても、ダブルクリックしたら表示する
+                Set-NCLogViewerToolTab -Context $ctx -Tab $ctx.UI.HexTab -Visible $true
                 # 初めて表示するタブは DataGrid の生成前でスクロールできないため、描画後に移動する
                 [void]$ctx.Window.Dispatcher.BeginInvoke([System.Windows.Threading.DispatcherPriority]::Loaded, [Action]{
                         Invoke-NCLogViewerAction -Context $ctx -Action {
@@ -202,7 +319,7 @@ function Start-NCLogViewerWindow {
             }
         })
 
-    # ② 16進ダンプ
+    # 16進ダンプ
     $ui.HexGrid.Add_CurrentCellChanged({
             Invoke-NCLogViewerAction -Context $ctx -Action {
                 $cell = $ctx.UI.HexGrid.CurrentCell
@@ -226,7 +343,7 @@ function Start-NCLogViewerWindow {
             if ($e.Key -eq [System.Windows.Input.Key]::Enter) { $e.Handled = $true; & $offsetJump }
         })
 
-    # ③ グラフ
+    # グラフ
     $ui.RangeApplyButton.Add_Click({
             Invoke-NCLogViewerAction -Context $ctx -Action {
                 if ($null -eq $ctx.Data -or $ctx.Data.RecordCount -eq 0) { return }
@@ -260,19 +377,29 @@ function Start-NCLogViewerWindow {
         $canvas.Add_MouseLeftButtonDown({
                 param($s, $e)
                 Invoke-NCLogViewerAction -Context $ctx -Action {
+                    $ctx.Drag = $null
                     if ($null -eq $ctx.Data -or $ctx.Data.RecordCount -eq 0) { return }
                     if ($e.ClickCount -ge 2) {
                         Set-NCLogViewerChartRange -Context $ctx -Start 0 -End ($ctx.Data.RecordCount - 1)
                         return
                     }
-                    $ctx.Drag = @{ X = $e.GetPosition($s).X; Start = $ctx.ViewStart; End = $ctx.ViewEnd }
+                    # 動かさずに離したらクリック (値の取得)、動かしたらドラッグ (移動)
+                    $ctx.Drag = @{ X = $e.GetPosition($s).X; Start = $ctx.ViewStart; End = $ctx.ViewEnd; Moved = $false }
                     [void]$s.CaptureMouse()
                 }
             })
         $canvas.Add_MouseLeftButtonUp({
                 param($s, $e)
+                $drag = $ctx.Drag
                 $ctx.Drag = $null
                 $s.ReleaseMouseCapture()
+                if ($null -eq $drag -or $drag.Moved) { return }
+                Invoke-NCLogViewerAction -Context $ctx -Action {
+                    if ($null -eq $ctx.Data -or $ctx.Data.RecordCount -eq 0) { return }
+                    $index = Get-NCLogChartIndex -X $e.GetPosition($s).X -Width $s.ActualWidth `
+                        -Start $ctx.ViewStart -End $ctx.ViewEnd -RecordCount $ctx.Data.RecordCount
+                    Set-NCLogViewerPickedRecord -Context $ctx -Index $index
+                }
             })
         $canvas.Add_MouseMove({
                 param($s, $e)
@@ -280,9 +407,14 @@ function Start-NCLogViewerWindow {
                     if ($null -eq $ctx.Data -or $ctx.Data.RecordCount -eq 0) { return }
                     $x = $e.GetPosition($s).X
                     $width = [Math]::Max(1.0, $s.ActualWidth)
-                    if ($null -ne $ctx.Drag -and $e.LeftButton -eq [System.Windows.Input.MouseButtonState]::Pressed) {
-                        $shift = [Math]::Round(($ctx.Drag.X - $x) / $width * ($ctx.Drag.End - $ctx.Drag.Start))
-                        Set-NCLogViewerChartRange -Context $ctx -Start ($ctx.Drag.Start + $shift) -End ($ctx.Drag.End + $shift)
+                    $drag = $ctx.Drag
+                    if ($null -ne $drag -and $e.LeftButton -eq [System.Windows.Input.MouseButtonState]::Pressed) {
+                        # 手ぶれでクリックがドラッグにならないよう、4px 以上動いたらドラッグとみなす
+                        if ($drag.Moved -or [Math]::Abs($drag.X - $x) -ge 4) {
+                            $drag.Moved = $true
+                            $shift = [Math]::Round(($drag.X - $x) / $width * ($drag.End - $drag.Start))
+                            Set-NCLogViewerChartRange -Context $ctx -Start ($drag.Start + $shift) -End ($drag.End + $shift)
+                        }
                     }
                     Update-NCLogViewerChartCursor -Context $ctx -X $x -Width $width
                 }
@@ -304,11 +436,31 @@ function Start-NCLogViewerWindow {
     $window.Add_ContentRendered({
             Invoke-NCLogViewerAction -Context $ctx -Action {
                 [void]$ctx.Window.Activate()
-                if ($LiteralFilePath) { Open-NCLogViewerFile -Context $ctx -LiteralFilePath $LiteralFilePath }
+                Update-NCLogViewerFileList -Context $ctx
+                $targets = @($LiteralFilePath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+                if ($targets.Count -gt 0) { Add-NCLogViewerFile -Context $ctx -Path $targets }
             }
         })
 
     [void]$window.ShowDialog()
+}
+
+function Get-NCLogViewerErrorMessage {
+    <#
+    .SYNOPSIS
+        例外から画面に表示するメッセージを取り出す (MethodInvocationException は中身を使う)。
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][System.Management.Automation.ErrorRecord]$ErrorRecord
+    )
+
+    $ex = $ErrorRecord.Exception
+    while ($ex -is [System.Management.Automation.MethodInvocationException] -and $null -ne $ex.InnerException) {
+        $ex = $ex.InnerException
+    }
+    $ex.Message
 }
 
 function Invoke-NCLogViewerAction {
@@ -326,13 +478,8 @@ function Invoke-NCLogViewerAction {
         & $Action
     }
     catch {
-        $ex = $_.Exception
-        # .NET メソッド呼び出しの例外は MethodInvocationException に包まれるので、中身のメッセージを出す
-        while ($ex -is [System.Management.Automation.MethodInvocationException] -and $null -ne $ex.InnerException) {
-            $ex = $ex.InnerException
-        }
         Write-Verbose ($_ | Out-String)
-        Show-NCLogViewerMessage -Context $Context -Icon Warning -Message $ex.Message
+        Show-NCLogViewerMessage -Context $Context -Icon Warning -Message (Get-NCLogViewerErrorMessage -ErrorRecord $_)
     }
 }
 
@@ -350,6 +497,84 @@ function Show-NCLogViewerMessage {
 
     [void][System.Windows.MessageBox]::Show($Context.Window, $Message, 'NCLog Viewer',
         [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]$Icon)
+}
+
+function Show-NCLogViewerQuestion {
+    <#
+    .SYNOPSIS
+        はい / いいえ (/ キャンセル) で確認し、押されたボタン (Yes / No / Cancel) を返す。
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][hashtable]$Context,
+        [Parameter(Mandatory)][string]$Message,
+        [switch]$WithCancel
+    )
+
+    $buttons = if ($WithCancel) { [System.Windows.MessageBoxButton]::YesNoCancel } else { [System.Windows.MessageBoxButton]::YesNo }
+    [string][System.Windows.MessageBox]::Show($Context.Window, $Message, 'NCLog Viewer', $buttons,
+        [System.Windows.MessageBoxImage]::Question)
+}
+
+function Show-NCLogViewerHowTo {
+    <#
+    .SYNOPSIS
+        使い方を表示する。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable]$Context
+    )
+
+    Show-NCLogViewerMessage -Context $Context -Message (@(
+            '【使い方】'
+            ''
+            '① BIN ファイルを開く'
+            '    [開く] (Ctrl+O) で複数選択、またはファイル・フォルダをウィンドウにドラッグ＆ドロップ'
+            ''
+            '② グラフをクリックして値を取得'
+            '    クリックした位置のレーザー出力とワイヤ速度が入ります (直接入力も可)'
+            ''
+            '③ 割合を入力'
+            '    Enter で次のファイルに移るので、続けて入力できます'
+            ''
+            '④ 一括 CSV 出力 (Ctrl+Shift+E)'
+            '    ファイル名: レーザー出力W_ワイヤ速度mm-min_割合%.csv'
+            '    (ファイル名に "/" は使えないため mm/min は mm-min と書きます)'
+            '    一覧で緑色の行が出力できるファイルです'
+            ''
+            '【その他】'
+            '    グラフ: ドラッグで移動 / ホイールで拡大・縮小 / ダブルクリックで全体'
+            '    [ツール] メニュー: 16進ダンプ・ファイル情報・レイアウト設定の表示'
+        ) -join "`n")
+}
+
+function Set-NCLogViewerToolTab {
+    <#
+    .SYNOPSIS
+        [ツール] メニューのタブ (16進ダンプ / ファイル情報) の表示・非表示を切り替える。
+    #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = '画面表示を切り替えるだけ')]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable]$Context,
+        [Parameter(Mandatory)][System.Windows.Controls.TabItem]$Tab,
+        [Parameter(Mandatory)][bool]$Visible
+    )
+
+    $ui = $Context.UI
+    $menu = if ([object]::ReferenceEquals($Tab, $ui.HexTab)) { $ui.MenuShowHex } else { $ui.MenuShowInfo }
+    $menu.IsChecked = $Visible
+    if ($Visible) {
+        $Tab.Visibility = [System.Windows.Visibility]::Visible
+        $ui.MainTabs.SelectedItem = $Tab
+    }
+    else {
+        if ([object]::ReferenceEquals($ui.MainTabs.SelectedItem, $Tab)) { $ui.MainTabs.SelectedItem = $ui.ChartTab }
+        $Tab.Visibility = [System.Windows.Visibility]::Collapsed
+    }
 }
 
 function Set-NCLogViewerLayoutText {
@@ -389,7 +614,7 @@ function Get-NCLogViewerLayout {
 function Open-NCLogViewerFileDialog {
     <#
     .SYNOPSIS
-        ファイル選択ダイアログで .BIN を選んで開く。
+        ファイル選択ダイアログで .BIN を選んで開く (複数選択可)。
     #>
     [CmdletBinding()]
     param(
@@ -397,52 +622,193 @@ function Open-NCLogViewerFileDialog {
     )
 
     $dialog = [Microsoft.Win32.OpenFileDialog]::new()
-    $dialog.Title = 'NCLog ファイルを開く'
+    $dialog.Title = 'NCLog ファイルを開く (複数選択できます)'
     $dialog.Filter = 'NCLog ファイル (*.BIN)|*.BIN|すべてのファイル (*.*)|*.*'
     $dialog.CheckFileExists = $true
-    $dialog.Multiselect = $false
-    if ($null -ne $Context.Data) {
-        $dialog.InitialDirectory = [System.IO.Path]::GetDirectoryName($Context.Data.Path)
+    $dialog.Multiselect = $true
+    if ($null -ne $Context.Current) {
+        $dialog.InitialDirectory = [System.IO.Path]::GetDirectoryName($Context.Current.Path)
     }
     if ($dialog.ShowDialog($Context.Window) -eq $true) {
-        Open-NCLogViewerFile -Context $Context -LiteralFilePath $dialog.FileName
+        Add-NCLogViewerFile -Context $Context -Path $dialog.FileNames
     }
 }
 
-function Open-NCLogViewerFile {
+function Add-NCLogViewerFile {
     <#
     .SYNOPSIS
-        ファイルを読み込み、現在のレイアウトで解析して表示する。
+        ファイル (フォルダなら直下の .BIN) を読み込み、現在のレイアウトで解析してファイル一覧に追加する。
+    .DESCRIPTION
+        開けなかったファイルがあっても残りは開き、最後にまとめて知らせる。
+        既に開いているファイルは開き直さずに選択する。
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][hashtable]$Context,
-        [Parameter(Mandatory)][string]$LiteralFilePath
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Path,
+        # メモリを使い過ぎないよう、同時に開けるファイル数を制限する (1ファイル最大 16MB)
+        [ValidateRange(1, 1000)][int]$MaxFiles = 100
     )
 
     # 入力欄が不正なら、ファイルを読む前に知らせる
     $layout = Get-NCLogViewerLayout -Context $Context
-    $fullPath = [System.IO.Path]::GetFullPath($LiteralFilePath)
-    if (-not [System.IO.File]::Exists($fullPath)) {
-        throw [System.IO.FileNotFoundException]::new("ファイルが見つかりません: $fullPath", $fullPath)
-    }
+    $existing = [string[]]@($Context.Files | ForEach-Object { $_.Path })
+    $target = Resolve-NCLogViewerOpenTarget -Path $Path -Existing $existing -MaxCount ([Math]::Max(0, $MaxFiles - $Context.Files.Count))
+
+    $problems = [System.Collections.Generic.List[string]]::new()
+    foreach ($m in $target.Messages) { $problems.Add($m) }
+    $first = $null
 
     $Context.Window.Cursor = [System.Windows.Input.Cursors]::Wait
     try {
-        $bytes = Read-NCLogViewFile -LiteralFilePath $fullPath
-        $data = New-NCLogViewData -Bytes $bytes -Path $fullPath -LastWriteTime ([System.IO.File]::GetLastWriteTime($fullPath)) @layout
-        $Context.Bytes = $bytes
-        Set-NCLogViewerData -Context $Context -Data $data
+        foreach ($file in $target.Files) {
+            try {
+                $bytes = Read-NCLogViewFile -LiteralFilePath $file
+                $data = New-NCLogViewData -Bytes $bytes -Path $file -LastWriteTime ([System.IO.File]::GetLastWriteTime($file)) @layout
+                $entry = New-NCLogViewerFile -Path $file -Data $data
+                $Context.Suppress = $true
+                try { $Context.Files.Add($entry) } finally { $Context.Suppress = $false }
+                if ($null -eq $first) { $first = $entry }
+            }
+            catch {
+                $problems.Add("$([System.IO.Path]::GetFileName($file)): $(Get-NCLogViewerErrorMessage -ErrorRecord $_)")
+            }
+        }
     }
     finally {
         $Context.Window.Cursor = $null
     }
+
+    if ($null -eq $first -and $target.AlreadyOpen.Count -gt 0) {
+        $first = $Context.Files | Where-Object { $_.Path -eq $target.AlreadyOpen[0] } | Select-Object -First 1
+    }
+    if ($null -ne $first) {
+        Select-NCLogViewerFile -Context $Context -File $first
+    }
+    else {
+        Update-NCLogViewerFileList -Context $Context
+    }
+
+    $opened = $target.Files.Count - ($problems.Count - $target.Messages.Count)
+    $Context.UI.StatusText.Text = "$opened ファイルを開きました。グラフをクリックして値を取得し、割合を入力してください。"
+    if ($problems.Count -gt 0) {
+        $shown = @($problems | Select-Object -First 15)
+        $more = if ($problems.Count -gt $shown.Count) { "`n… ほか $($problems.Count - $shown.Count) 件" } else { '' }
+        Show-NCLogViewerMessage -Context $Context -Icon Warning -Message (
+            "開けなかったファイルがあります。`n`n" + ($shown -join "`n") + $more)
+    }
 }
 
-function Update-NCLogViewerLayout {
+function Remove-NCLogViewerFile {
     <#
     .SYNOPSIS
-        読み込み済みのバイト列を、入力欄のレイアウトで解析し直す (ファイルは読み直さない)。
+        選択中のファイル (All なら全部) をファイル一覧から外す。ファイル自体は削除しない。
+    #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = '画面の一覧から外すだけで、ファイルは削除しない')]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable]$Context,
+        [switch]$All
+    )
+
+    $files = $Context.Files
+    if ($files.Count -eq 0) { return }
+
+    $next = $null
+    $Context.Suppress = $true
+    try {
+        if ($All) {
+            $files.Clear()
+        }
+        elseif ($null -ne $Context.Current) {
+            $index = $files.IndexOf($Context.Current)
+            [void]$files.Remove($Context.Current)
+            if ($files.Count -gt 0) { $next = $files[[Math]::Min([Math]::Max(0, $index), $files.Count - 1)] }
+        }
+        else {
+            return
+        }
+    }
+    finally {
+        $Context.Suppress = $false
+    }
+    Select-NCLogViewerFile -Context $Context -File $next
+}
+
+function Select-NCLogViewerFile {
+    <#
+    .SYNOPSIS
+        ファイル一覧のファイルを選択し、グラフ・レコード・入力欄に表示する。$null なら表示を空にする。
+    #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = '画面表示を更新するだけ')]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable]$Context,
+        [Parameter(Mandatory)][AllowNull()][object]$File
+    )
+
+    $ui = $Context.UI
+    $Context.Current = $File
+    $Context.Suppress = $true
+    try {
+        if ($null -eq $File) {
+            $ui.FileGrid.SelectedItem = $null
+            $ui.LaserBox.Text = ''
+            $ui.WireBox.Text = ''
+            $ui.RatioBox.Text = ''
+            $ui.SelectedFileText.Text = ' '
+            $ui.NameGroup.IsEnabled = $false
+            Set-NCLogViewerData -Context $Context -Data $null
+        }
+        else {
+            if (-not [object]::ReferenceEquals($ui.FileGrid.SelectedItem, $File)) {
+                $ui.FileGrid.SelectedItem = $File
+            }
+            $ui.FileGrid.ScrollIntoView($File)
+            $ui.LaserBox.Text = $File.LaserText
+            $ui.WireBox.Text = $File.WireText
+            $ui.RatioBox.Text = $File.RatioText
+            $ui.SelectedFileText.Text = $File.FileName
+            $ui.SelectedFileText.ToolTip = $File.Path
+            $ui.NameGroup.IsEnabled = $true
+            Set-NCLogViewerData -Context $Context -Data $File.Data
+        }
+    }
+    finally {
+        $Context.Suppress = $false
+    }
+    Update-NCLogViewerPickedText -Context $Context
+    Update-NCLogViewerFileList -Context $Context
+}
+
+function Select-NCLogViewerNextFile {
+    <#
+    .SYNOPSIS
+        一覧の次のファイルを選択し、割合の入力欄にカーソルを移す (割合の連続入力用)。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable]$Context
+    )
+
+    $files = $Context.Files
+    if ($null -eq $Context.Current -or $files.Count -eq 0) { return }
+    $index = $files.IndexOf($Context.Current)
+    if ($index -ge $files.Count - 1) {
+        $Context.UI.StatusText.Text = '最後のファイルです。すべて入力したら [一括 CSV 出力] を押してください。'
+        return
+    }
+    Select-NCLogViewerFile -Context $Context -File $files[$index + 1]
+    [void]$Context.UI.RatioBox.Focus()
+    $Context.UI.RatioBox.SelectAll()
+}
+
+function Update-NCLogViewerFileList {
+    <#
+    .SYNOPSIS
+        出力ファイル名・状態を計算し直し、ファイル一覧と一括出力の表示・ボタンを更新する。
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
         Justification = '画面表示を更新するだけ')]
@@ -451,27 +817,188 @@ function Update-NCLogViewerLayout {
         [Parameter(Mandatory)][hashtable]$Context
     )
 
-    if ($null -eq $Context.Bytes) { return }
+    $ui = $Context.UI
+    $files = @($Context.Files)
+    $snapshot = { param($list) ($list | ForEach-Object { "$($_.OutputName)|$($_.Status)|$($_.IsReady)" }) -join "`n" }
+    $before = & $snapshot $files
+    Update-NCLogViewerFileState -File $files -OutputDirectory $ui.OutputDirBox.Text
+
+    # NCLogViewerFile は変更通知を持たないため、表示内容が変わったときだけ一覧を描き直す
+    # (選択を変えただけで描き直すと、矢印キーでの行移動がリセットされるため)
+    if ((& $snapshot $files) -cne $before) {
+        $Context.Suppress = $true
+        try {
+            $ui.FileGrid.Items.Refresh()
+            if ($null -ne $Context.Current -and -not [object]::ReferenceEquals($ui.FileGrid.SelectedItem, $Context.Current)) {
+                $ui.FileGrid.SelectedItem = $Context.Current
+            }
+        }
+        finally {
+            $Context.Suppress = $false
+        }
+    }
+
+    $ready = @($files | Where-Object { $_.IsReady }).Count
+    $ui.BatchSummaryText.Text = "出力できるファイル: $ready / $($files.Count) 件"
+    $ui.FileCountText.Text = "$($files.Count) ファイル"
+    $ui.BatchExportButton.IsEnabled = $ready -gt 0
+    $ui.ToolbarBatchExportButton.IsEnabled = $ready -gt 0
+    $ui.MenuBatchExport.IsEnabled = $ready -gt 0
+    $ui.RemoveButton.IsEnabled = $null -ne $Context.Current
+    $ui.MenuRemove.IsEnabled = $null -ne $Context.Current
+    $ui.MenuRemoveAll.IsEnabled = $files.Count -gt 0
+    $ui.ApplyLayoutButton.IsEnabled = $files.Count -gt 0
+
+    $current = $Context.Current
+    if ($null -eq $current) {
+        $ui.OutputNameText.Text = '(ファイルを選択してください)'
+        $ui.OutputNameText.Foreground = [System.Windows.Media.Brushes]::Gray
+    }
+    elseif ($current.OutputName) {
+        $ui.OutputNameText.Text = $current.OutputName
+        $ui.OutputNameText.Foreground = if ($current.IsReady) { [System.Windows.Media.Brushes]::Black } else { [System.Windows.Media.Brushes]::Firebrick }
+        $ui.OutputNameText.ToolTip = "$($current.OutputPath)`n$($current.Status)"
+    }
+    else {
+        $ui.OutputNameText.Text = "($($current.Status))"
+        $ui.OutputNameText.Foreground = [System.Windows.Media.Brushes]::Gray
+        $ui.OutputNameText.ToolTip = $null
+    }
+}
+
+function Update-NCLogViewerPickedText {
+    <#
+    .SYNOPSIS
+        グラフから取得したレコードの表示を更新する。
+    #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = '画面表示を更新するだけ')]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable]$Context
+    )
+
+    $current = $Context.Current
+    $Context.UI.PickedText.Text = if ($null -ne $current -and $current.PickedRecord -ge 0 -and
+        $current.PickedRecord -lt $current.Data.RecordCount) {
+        [string]::Format([System.Globalization.CultureInfo]::InvariantCulture,
+            'グラフの No.{0} から取得しました (ADD_40_0 = {1:0.######} / ADD_21_0 = {2:0.######})。緑の線が取得位置です。',
+            $current.PickedRecord, $current.Data.Value40[$current.PickedRecord], $current.Data.Value21[$current.PickedRecord])
+    }
+    else {
+        'グラフをクリックすると、その位置のレーザー出力とワイヤ速度が入ります。'
+    }
+}
+
+function Set-NCLogViewerPickedRecord {
+    <#
+    .SYNOPSIS
+        グラフでクリックしたレコードのレーザー出力・ワイヤ速度を、選択中ファイルの出力ファイル名の値にする。
+    #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = '画面の入力値を更新するだけ')]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable]$Context,
+        [Parameter(Mandatory)][int]$Index
+    )
+
+    $current = $Context.Current
+    if ($null -eq $current) { return }
+    $data = $current.Data
+    $v40 = $data.Value40[$Index]
+    $v21 = $data.Value21[$Index]
+    if (-not ([float]::IsFinite($v40) -and [float]::IsFinite($v21))) {
+        throw [System.InvalidOperationException]::new(
+            "No.$Index は無効レコード (NaN / Infinity) のため値を取得できません。別の位置をクリックしてください。")
+    }
+
+    $current.LaserText = Format-NCLogFileNameValue -Value $v40
+    $current.WireText = Format-NCLogFileNameValue -Value $v21
+    $current.PickedRecord = $Index
+
+    $Context.Suppress = $true
+    try {
+        $Context.UI.LaserBox.Text = $current.LaserText
+        $Context.UI.WireBox.Text = $current.WireText
+    }
+    finally {
+        $Context.Suppress = $false
+    }
+    Update-NCLogViewerPickedText -Context $Context
+    Update-NCLogViewerFileList -Context $Context
+    Update-NCLogViewerChart -Context $Context
+    $Context.UI.StatusText.Text = "No.$Index の値を取得しました: レーザー出力 $($current.LaserText) W / ワイヤ速度 $($current.WireText) mm/min"
+
+    # 割合が未入力なら、続けて入力できるようにする
+    if ([string]::IsNullOrWhiteSpace($current.RatioText)) {
+        [void]$Context.UI.RatioBox.Focus()
+    }
+}
+
+function Update-NCLogViewerLayout {
+    <#
+    .SYNOPSIS
+        開いているすべてのファイルを、入力欄のレイアウトで解析し直す (ファイルは読み直さない)。
+    #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = '画面表示を更新するだけ')]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable]$Context
+    )
+
+    if ($Context.Files.Count -eq 0) { return }
     $layout = Get-NCLogViewerLayout -Context $Context
-    $data = New-NCLogViewData -Bytes $Context.Bytes -Path $Context.Data.Path -LastWriteTime $Context.Data.LastWriteTime @layout
-    Set-NCLogViewerData -Context $Context -Data $data
+    $Context.Window.Cursor = [System.Windows.Input.Cursors]::Wait
+    try {
+        foreach ($f in $Context.Files) {
+            $f.Data = New-NCLogViewData -Bytes $f.Data.Bytes -Path $f.Path -LastWriteTime $f.Data.LastWriteTime @layout
+            if ($f.PickedRecord -ge $f.Data.RecordCount) { $f.PickedRecord = -1 }
+        }
+    }
+    finally {
+        $Context.Window.Cursor = $null
+    }
+    Select-NCLogViewerFile -Context $Context -File $Context.Current
 }
 
 function Set-NCLogViewerData {
     <#
     .SYNOPSIS
-        解析結果を全タブに反映する。
+        解析結果を全タブに反映する。$null なら表示を空にする。
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
         Justification = '画面表示を更新するだけ')]
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][hashtable]$Context,
-        [Parameter(Mandatory)][psobject]$Data
+        [Parameter(Mandatory)][AllowNull()][psobject]$Data
     )
 
     $ui = $Context.UI
     $Context.Data = $Data
+
+    if ($null -eq $Data) {
+        $Context.RecordList = $null
+        $Context.HexList = $null
+        foreach ($grid in $ui.RecordGrid, $ui.HexGrid, $ui.InspectorGrid, $ui.FileInfoGrid, $ui.StatisticsGrid, $ui.HeaderGrid) {
+            $grid.ItemsSource = $null
+        }
+        $ui.MenuExport.IsEnabled = $false
+        $ui.ChartEmptyText.Visibility = [System.Windows.Visibility]::Visible
+        $Context.Window.Title = 'NCLog Viewer'
+        $ui.StatusText.Text = 'ファイルを開くか、ウィンドウにドラッグ＆ドロップしてください。'
+        $ui.SelectionText.Text = ''
+        $ui.HoverText.Text = ' '
+        $ui.RangeStartBox.Text = ''
+        $ui.RangeEndBox.Text = ''
+        $Context.ViewStart = 0
+        $Context.ViewEnd = 0
+        Update-NCLogViewerChart -Context $Context
+        return
+    }
+
     $Context.RecordList = New-NCLogRecordRowList -Value40 $Data.Value40 -Value21 $Data.Value21 `
         -HeaderSize $Data.HeaderSize -RecordSize $Data.RecordSize
     $Context.HexList = New-NCLogHexRowList -Bytes $Data.Bytes -HeaderSize $Data.HeaderSize `
@@ -497,10 +1024,8 @@ function Set-NCLogViewerData {
     $ui.StatisticsGrid.ItemsSource = @($Data.Statistics)
     $ui.HeaderGrid.ItemsSource = @($Data.HeaderWords)
 
-    $hasRecords = $Data.RecordCount -gt 0
-    $ui.ExportButton.IsEnabled = $hasRecords
-    $ui.MenuExport.IsEnabled = $hasRecords
-    $ui.ApplyLayoutButton.IsEnabled = $true
+    $ui.MenuExport.IsEnabled = $Data.RecordCount -gt 0
+    $ui.ChartEmptyText.Visibility = [System.Windows.Visibility]::Collapsed
 
     $Context.Window.Title = "NCLog Viewer - $($Data.FileName)"
     $ui.StatusText.Text = [string]::Format($ic, '{0}  |  {1:N0} byte  |  {2:N0} レコード (無効 {3:N0})  |  端数 {4} byte',
@@ -586,6 +1111,7 @@ function Set-NCLogViewerChartRange {
         [switch]$Force
     )
 
+    if ($null -eq $Context.Data) { return }
     $last = [Math]::Max(0, $Context.Data.RecordCount - 1)
     $count = [Math]::Min([Math]::Max(1, $End - $Start), [Math]::Max(1, $last))
     $first = [int][Math]::Max(0, [Math]::Min($Start, $last - $count))
@@ -602,7 +1128,7 @@ function Set-NCLogViewerChartRange {
 function Update-NCLogViewerChart {
     <#
     .SYNOPSIS
-        2つのグラフ (ADD_40_0 / ADD_21_0) を現在の表示範囲で描き直す。
+        2つのグラフ (ADD_40_0 / ADD_21_0) を現在の表示範囲で描き直す。値を取得した位置には緑の線を引く。
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
         Justification = '画面表示を更新するだけ')]
@@ -613,6 +1139,7 @@ function Update-NCLogViewerChart {
 
     $ui = $Context.UI
     $data = $Context.Data
+    $picked = if ($null -ne $Context.Current -and $null -ne $data) { $Context.Current.PickedRecord } else { -1 }
     $charts = @(
         @{ Canvas = $ui.Chart40Canvas; Max = $ui.Chart40MaxText; Min = $ui.Chart40MinText; Brush = 'Value40Brush'; CursorKey = 'Cursor40'
             Values = $(if ($data) { $data.Plot40 } else { $null })
@@ -626,6 +1153,7 @@ function Update-NCLogViewerChart {
     foreach ($chart in $charts) {
         $canvas = $chart.Canvas
         $canvas.Children.Clear()
+        $Context[$chart.CursorKey] = $null
         $chart.Max.Text = ''
         $chart.Min.Text = ''
         $width = $canvas.ActualWidth
@@ -641,6 +1169,18 @@ function Update-NCLogViewerChart {
             [void]$canvas.Children.Add($grid)
         }
 
+        # 値を取得した位置 (緑の実線)
+        if ($picked -ge 0) {
+            $px = Get-NCLogChartX -Index $picked -Width $width -Start $Context.ViewStart -End $Context.ViewEnd
+            if ($null -ne $px) {
+                $pickLine = [System.Windows.Shapes.Line]@{
+                    X1 = $px; X2 = $px; Y1 = 0; Y2 = $height
+                    Stroke = $Context.Window.FindResource('PickBrush'); StrokeThickness = 2; IsHitTestVisible = $false
+                }
+                [void]$canvas.Children.Add($pickLine)
+            }
+        }
+
         $geometry = Get-NCLogPlotGeometry -Value $chart.Values -Start $Context.ViewStart -End $Context.ViewEnd `
             -Width $width -Height ($height - 8) -Margin 0.05
         if ($geometry.PointCount -gt 0) {
@@ -649,6 +1189,7 @@ function Update-NCLogViewerChart {
             $line.Stroke = $Context.Window.FindResource($chart.Brush)
             $line.StrokeThickness = 1.2
             $line.StrokeLineJoin = [System.Windows.Media.PenLineJoin]::Round
+            $line.IsHitTestVisible = $false
             # 上下 4px の余白
             [System.Windows.Controls.Canvas]::SetTop($line, 4)
             [void]$canvas.Children.Add($line)
@@ -692,10 +1233,7 @@ function Update-NCLogViewerChartCursor {
     )
 
     $data = $Context.Data
-    $count = $Context.ViewEnd - $Context.ViewStart
-    $ratio = [Math]::Min(1.0, [Math]::Max(0.0, $X / $Width))
-    $index = [int][Math]::Round($Context.ViewStart + $ratio * $count)
-    $index = [Math]::Min([Math]::Max(0, $index), $data.RecordCount - 1)
+    $index = Get-NCLogChartIndex -X $X -Width $Width -Start $Context.ViewStart -End $Context.ViewEnd -RecordCount $data.RecordCount
 
     foreach ($line in $Context.Cursor40, $Context.Cursor21) {
         if ($null -eq $line) { continue }
@@ -705,15 +1243,58 @@ function Update-NCLogViewerChartCursor {
     }
 
     $Context.UI.HoverText.Text = [string]::Format([System.Globalization.CultureInfo]::InvariantCulture,
-        'No.{0}   ADD_40_0 = {1:0.######} %   ADD_21_0 = {2:0.######} mm/min{3}',
+        'No.{0}   ADD_40_0 = {1:0.######}   ADD_21_0 = {2:0.######} mm/min{3}',
         $index, $data.Value40[$index], $data.Value21[$index],
-        $(if ([float]::IsFinite($data.Value40[$index]) -and [float]::IsFinite($data.Value21[$index])) { '' } else { '   (無効レコード)' }))
+        $(if ([float]::IsFinite($data.Value40[$index]) -and [float]::IsFinite($data.Value21[$index])) { '   (クリックで取得)' } else { '   (無効レコード)' }))
+}
+
+function Select-NCLogViewerOutputDirectory {
+    <#
+    .SYNOPSIS
+        一括 CSV 出力の出力先フォルダを選ぶ。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable]$Context
+    )
+
+    $box = $Context.UI.OutputDirBox
+    $initial = if (-not [string]::IsNullOrWhiteSpace($box.Text) -and [System.IO.Directory]::Exists($box.Text.Trim())) {
+        $box.Text.Trim()
+    }
+    elseif ($null -ne $Context.Current) {
+        [System.IO.Path]::GetDirectoryName($Context.Current.Path)
+    }
+    else { '' }
+
+    # .NET 8 (PowerShell 7.4 以降) は WPF のフォルダ選択ダイアログがある。それより前は Windows フォーム版を使う
+    $folderDialogType = 'Microsoft.Win32.OpenFolderDialog' -as [type]
+    if ($null -ne $folderDialogType) {
+        $dialog = $folderDialogType::new()
+        $dialog.Title = 'CSV の出力先フォルダを選択'
+        if ($initial) { $dialog.InitialDirectory = $initial }
+        if ($dialog.ShowDialog($Context.Window) -eq $true) { $box.Text = $dialog.FolderName }
+        return
+    }
+
+    Add-Type -AssemblyName System.Windows.Forms
+    $dialog = [System.Windows.Forms.FolderBrowserDialog]::new()
+    try {
+        $dialog.Description = 'CSV の出力先フォルダを選択'
+        $dialog.UseDescriptionForTitle = $true
+        if ($initial) { $dialog.SelectedPath = $initial }
+        if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $box.Text = $dialog.SelectedPath }
+    }
+    finally {
+        $dialog.Dispose()
+    }
 }
 
 function Export-NCLogViewerCsv {
     <#
     .SYNOPSIS
-        表示中のファイルを、表示中のレイアウトで CSV に出力する (Export-NCLogValue を使用)。
+        選択中のファイルを、表示中のレイアウトで CSV に出力する (Export-NCLogValue を使用)。
+        ファイル名の初期値は出力ファイル名 (入力済みの場合)。
     #>
     [CmdletBinding()]
     param(
@@ -721,7 +1302,8 @@ function Export-NCLogViewerCsv {
     )
 
     $data = $Context.Data
-    if ($null -eq $data) { return }
+    $current = $Context.Current
+    if ($null -eq $data -or $null -eq $current) { return }
     $valid = $data.RecordCount - $data.InvalidCount
     if ($valid -le 0) {
         Show-NCLogViewerMessage -Context $Context -Icon Warning -Message '出力できる有効なレコードがありません。'
@@ -734,8 +1316,14 @@ function Export-NCLogViewerCsv {
     $dialog.DefaultExt = '.csv'
     $dialog.AddExtension = $true
     $dialog.OverwritePrompt = $true   # 上書きはダイアログで確認済みとして -Force で出力する
-    $dialog.InitialDirectory = [System.IO.Path]::GetDirectoryName($data.Path)
-    $dialog.FileName = [System.IO.Path]::GetFileNameWithoutExtension($data.Path) + '.csv'
+    if ($current.OutputPath) {
+        $dialog.InitialDirectory = [System.IO.Path]::GetDirectoryName($current.OutputPath)
+        $dialog.FileName = $current.OutputName
+    }
+    else {
+        $dialog.InitialDirectory = [System.IO.Path]::GetDirectoryName($data.Path)
+        $dialog.FileName = [System.IO.Path]::GetFileNameWithoutExtension($data.Path) + '.csv'
+    }
     if ($dialog.ShowDialog($Context.Window) -ne $true) { return }
 
     # 解析結果と CSV が一致するよう、表示中のレイアウトを使う (入力欄を編集中でも再解析前の値)
@@ -765,4 +1353,110 @@ function Export-NCLogViewerCsv {
     }
     else { '' }
     Show-NCLogViewerMessage -Context $Context -Message ("CSV に出力しました ($valid 件)。`n$($dialog.FileName)$note")
+}
+
+function Export-NCLogViewerBatchCsv {
+    <#
+    .SYNOPSIS
+        出力できるファイル (一覧で緑の行) を、それぞれの出力ファイル名で CSV に一括出力する。
+    .DESCRIPTION
+        - 未入力・重複などで出力できないファイルがあれば、出力できる分だけ出力するか確認する
+        - 出力先フォルダがなければ作成するか確認する
+        - 既に同名の CSV があれば、上書き / スキップ / 中止 を確認する
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable]$Context
+    )
+
+    $files = @($Context.Files)
+    if ($files.Count -eq 0) {
+        Show-NCLogViewerMessage -Context $Context -Icon Warning -Message 'BIN ファイルを開いてください。'
+        return
+    }
+
+    # 出力先フォルダ (空欄なら各 BIN と同じフォルダ)
+    $directory = $Context.UI.OutputDirBox.Text.Trim()
+    if ($directory) {
+        if (-not [System.IO.Path]::IsPathRooted($directory)) {
+            throw [System.ArgumentException]::new("出力先フォルダは C:\... のような絶対パスで指定してください: $directory")
+        }
+        if (-not [System.IO.Directory]::Exists($directory)) {
+            $answer = Show-NCLogViewerQuestion -Context $Context -Message "出力先フォルダがありません。作成しますか?`n`n$directory"
+            if ($answer -ne 'Yes') { return }
+            [void][System.IO.Directory]::CreateDirectory($directory)
+        }
+    }
+
+    Update-NCLogViewerFileList -Context $Context
+    $ready = @($files | Where-Object { $_.IsReady })
+    $notReady = @($files | Where-Object { -not $_.IsReady })
+    $describe = {
+        param($list)
+        $lines = @($list | Select-Object -First 10 | ForEach-Object { "  $($_.FileName): $($_.Status)" })
+        if ($list.Count -gt $lines.Count) { $lines += "  … ほか $($list.Count - $lines.Count) 件" }
+        $lines -join "`n"
+    }
+
+    if ($ready.Count -eq 0) {
+        Show-NCLogViewerMessage -Context $Context -Icon Warning -Message (
+            "出力できるファイルがありません。レーザー出力・ワイヤ速度・割合を入力してください。`n`n" + (& $describe $notReady))
+        return
+    }
+    if ($notReady.Count -gt 0) {
+        $answer = Show-NCLogViewerQuestion -Context $Context -Message (
+            "次の $($notReady.Count) 件は出力できません:`n`n" + (& $describe $notReady) +
+            "`n`n出力できる $($ready.Count) 件だけ出力しますか?")
+        if ($answer -ne 'Yes') { return }
+    }
+
+    $existing = @($ready | Where-Object { [System.IO.File]::Exists($_.OutputPath) })
+    $existingAction = 'Skip'
+    if ($existing.Count -gt 0) {
+        $names = @($existing | Select-Object -First 10 | ForEach-Object { "  $($_.OutputName)" })
+        $answer = Show-NCLogViewerQuestion -Context $Context -WithCancel -Message (
+            "$($existing.Count) 件の CSV が既にあります:`n`n" + ($names -join "`n") +
+            "`n`nはい: 上書きする`nいいえ: 既にあるファイルは出力しない`nキャンセル: 中止する")
+        if ($answer -eq 'Cancel') { return }
+        if ($answer -eq 'Yes') { $existingAction = 'Overwrite' }
+    }
+
+    # 表示中のレイアウト (各ファイルの解析に使ったもの) で出力する
+    $items = foreach ($f in $ready) {
+        [pscustomobject]@{
+            SourcePath    = $f.Path
+            OutputPath    = $f.OutputPath
+            HeaderSize    = $f.Data.HeaderSize
+            RecordSize    = $f.Data.RecordSize
+            Value40Offset = $f.Data.Value40Offset
+            Value21Offset = $f.Data.Value21Offset
+            ValidCount    = $f.Data.RecordCount - $f.Data.InvalidCount
+        }
+    }
+
+    $Context.Window.Cursor = [System.Windows.Input.Cursors]::Wait
+    try {
+        $results = @(Invoke-NCLogBatchCsvExport -Item @($items) -ExistingAction $existingAction -Confirm:$false)
+    }
+    finally {
+        $Context.Window.Cursor = $null
+    }
+
+    $exported = @($results | Where-Object Result -eq 'Exported')
+    $skipped = @($results | Where-Object Result -eq 'Skipped')
+    $failed = @($results | Where-Object Result -eq 'Failed')
+    $folders = @($exported | ForEach-Object { [System.IO.Path]::GetDirectoryName($_.OutputPath) } | Sort-Object -Unique)
+
+    $message = [System.Text.StringBuilder]::new()
+    [void]$message.AppendLine("CSV を $($exported.Count) 件出力しました。")
+    if ($folders.Count -eq 1) { [void]$message.AppendLine("出力先: $($folders[0])") }
+    if ($skipped.Count -gt 0) { [void]$message.AppendLine("既にあるため出力しなかった: $($skipped.Count) 件") }
+    if ($failed.Count -gt 0) {
+        [void]$message.AppendLine("`n失敗: $($failed.Count) 件")
+        foreach ($r in @($failed | Select-Object -First 10)) {
+            [void]$message.AppendLine("  $([System.IO.Path]::GetFileName($r.SourcePath)): $($r.Message)")
+        }
+    }
+    $Context.UI.StatusText.Text = "一括 CSV 出力: 出力 $($exported.Count) 件 / スキップ $($skipped.Count) 件 / 失敗 $($failed.Count) 件"
+    Show-NCLogViewerMessage -Context $Context -Icon $(if ($failed.Count -gt 0) { 'Warning' } else { 'Information' }) -Message $message.ToString().TrimEnd()
 }

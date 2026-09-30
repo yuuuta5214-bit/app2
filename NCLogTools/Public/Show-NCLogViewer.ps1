@@ -4,15 +4,19 @@
         NCLog バイナリファイル (.BIN) を GUI (WPF) で閲覧する。Windows 専用。
 
     .DESCRIPTION
-        NCLog ファイルを1つ開き、次の4つのタブで表示するウィンドウを起動します。
+        NCLog ファイルを開き (複数可)、ファイルごとに CSV の出力ファイル名を決めて一括出力するウィンドウを起動します。
         ウィンドウを閉じるまでコマンドは戻りません。
 
-        ① レコード   : レコード番号・アドレス・ADD_40_0 (%)・ADD_21_0 (mm/min) の一覧。
-                       NaN / Infinity を含む無効レコードは赤で表示します。
-        ② 16進ダンプ : ヘッダー / レコード / 末尾の端数を色分けした16進表示。
-                       選択したバイト位置を Int8～Int64 / Single / Double として解釈して表示します。
-        ③ グラフ     : ADD_40_0 と ADD_21_0 の推移。ホイールで拡大・縮小、ドラッグで移動。
-        ④ ファイル情報: サイズ・レコード数・端数バイト・統計・ヘッダーの解釈。
+        左側 (作業順):
+          ① ファイル一覧   : 開いたファイルと出力ファイル名・状態。出力できる行は緑。
+          ②③ 出力ファイル名: グラフをクリックした位置のレーザー出力・ワイヤ速度と、手入力の割合から
+                             「レーザー出力W_ワイヤ速度mm-min_割合%.csv」を作ります
+                             (ファイル名に '/' は使えないため mm/min は mm-min)。
+          ④ 一括 CSV 出力  : 出力できるファイルをすべて CSV に出力します。
+        右側のタブ:
+          グラフ       : ADD_40_0 と ADD_21_0 の推移。クリックで値を取得、ホイールで拡大・縮小、ドラッグで移動。
+          レコード     : レコード番号・アドレス・ADD_40_0・ADD_21_0 の一覧。無効レコードは赤。
+          16進ダンプ・ファイル情報は [ツール] メニューで表示します。
 
         ファイルは読み取り専用・共有読み取りで開き、変更しません。
         画面上でレイアウト (ヘッダー / レコードサイズ / 各値の位置) を変えて再解析でき、
@@ -20,12 +24,13 @@
 
         ファイルはメモリに読み込むため、16MB を超えるファイルは開けません。
         パスを省略した場合は空のウィンドウを開きます ([開く] またはドラッグ＆ドロップで指定)。
+        同時に開けるのは 100 ファイルまでです。
 
     .PARAMETER Path
-        開く NCLog ファイルのパス。ワイルドカード可 (一致するのは1ファイルのみであること)。別名: FilePath
+        開く NCLog ファイルのパス (複数可)。ワイルドカード可。別名: FilePath
 
     .PARAMETER LiteralPath
-        ワイルドカードとして解釈しないパス ('[' などを含むファイル名用)。
+        ワイルドカードとして解釈しないパス (複数可。'[' などを含むファイル名用)。
 
     .PARAMETER HeaderSize
         起動時のヘッダーのバイト数。既定 0x20 (32)。画面の [既定値] ボタンでこの値に戻ります。
@@ -49,6 +54,11 @@
         Show-NCLogViewer 'C:\Logs\NCLog_00000000_00003044.BIN'
 
         ファイルを開いてビューアーを表示します。
+
+    .EXAMPLE
+        Show-NCLogViewer 'C:\Logs\NCLog_*.BIN'
+
+        一致するファイルをすべて開きます。
 
     .EXAMPLE
         Show-NCLogViewer
@@ -79,12 +89,12 @@
         [Alias('FilePath')]
         [ValidateNotNullOrEmpty()]
         [SupportsWildcards()]
-        [string]$Path,
+        [string[]]$Path,
 
         [Parameter(Mandatory, ParameterSetName = 'LiteralPath')]
         [Alias('PSPath', 'LP')]
         [ValidateNotNullOrEmpty()]
-        [string]$LiteralPath,
+        [string[]]$LiteralPath,
 
         [ValidateRange(0, 1MB)]
         [int]$HeaderSize = 0x20,
@@ -102,25 +112,17 @@
     Assert-NCLogLayout -Cmdlet $PSCmdlet -RecordSize $RecordSize `
         -Value40Offset $Value40Offset -Value21Offset $Value21Offset
 
-    $file = $null
+    $files = [string[]]@()
     if ($PSBoundParameters.ContainsKey('Path') -or $PSBoundParameters.ContainsKey('LiteralPath')) {
-        $resolved = @(
-            if ($PSCmdlet.ParameterSetName -eq 'LiteralPath') {
-                Resolve-NCLogPath -Cmdlet $PSCmdlet -InputPath $LiteralPath -Literal
-            }
-            else {
-                Resolve-NCLogPath -Cmdlet $PSCmdlet -InputPath $Path
-            }
+        $literal = $PSCmdlet.ParameterSetName -eq 'LiteralPath'
+        $inputs = if ($literal) { $LiteralPath } else { $Path }
+        $files = [string[]]@(
+            foreach ($p in $inputs) { Resolve-NCLogPath -Cmdlet $PSCmdlet -InputPath $p -Literal:$literal }
         )
-        # 解決できなかった場合は Resolve-NCLogPath がエラーを報告済み
-        if ($resolved.Count -eq 0) { return }
-        if ($resolved.Count -gt 1) {
-            $PSCmdlet.ThrowTerminatingError((New-NCLogErrorRecord `
-                        -Exception ([System.ArgumentException]::new(
-                            "ビューアーで開けるのは1ファイルです。$($resolved.Count) 件のファイルが一致しました: $Path")) `
-                        -ErrorId 'MultipleFilesNotSupported' -Category InvalidArgument -TargetObject $Path))
-        }
-        $file = $resolved[0]
+        $files = [string[]]@($files | Select-Object -Unique)
+        # 1つも解決できなかった場合は Resolve-NCLogPath がエラーを報告済み。
+        # 一部だけ解決できた場合は、エラーを報告したうえで解決できたファイルを開く
+        if ($files.Count -eq 0) { return }
     }
 
     if (-not $IsWindows) {
@@ -130,11 +132,11 @@
     }
 
     try {
-        Start-NCLogViewerWindow -LiteralFilePath $file -HeaderSize $HeaderSize -RecordSize $RecordSize `
+        Start-NCLogViewerWindow -LiteralFilePath $files -HeaderSize $HeaderSize -RecordSize $RecordSize `
             -Value40Offset $Value40Offset -Value21Offset $Value21Offset
     }
     catch {
         $PSCmdlet.ThrowTerminatingError((New-NCLogErrorRecord -Exception $_.Exception `
-                    -ErrorId 'ViewerFailed' -Category InvalidOperation -TargetObject $file))
+                    -ErrorId 'ViewerFailed' -Category InvalidOperation -TargetObject $files))
     }
 }

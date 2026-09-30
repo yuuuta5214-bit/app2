@@ -4,7 +4,7 @@ rem  NCLogViewer.cmd - Launcher for the NCLog Viewer (Show-NCLogViewer)
 rem
 rem  Usage:
 rem    - Double-click       : open an empty viewer (use [Open] or drag and drop)
-rem    - Drag and drop      : drop one .BIN file onto this file to open it
+rem    - Drag and drop      : drop .BIN files or folders onto this file to open them
 rem
 rem  This file is intentionally ASCII only: cmd.exe reads batch files in the
 rem  OEM code page (CP932 on Japanese Windows), so all Japanese messages are

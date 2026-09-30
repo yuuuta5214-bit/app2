@@ -35,11 +35,6 @@ Describe 'Show-NCLogViewer' {
             Should -Invoke -ModuleName NCLogTools -CommandName Start-NCLogViewerWindow -Times 0 -Exactly
         }
 
-        It 'ワイルドカードが複数ファイルに一致したら終了エラー' {
-            { Show-NCLogViewer -Path (Join-Path $TestDrive 'NCLog_view*.BIN') } |
-                Should -Throw -ErrorId 'MultipleFilesNotSupported,Show-NCLogViewer'
-        }
-
         It 'レイアウトが不正なら終了エラー' {
             { Show-NCLogViewer -Path $log.FullName -RecordSize 8 -Value21Offset 8 } |
                 Should -Throw -ErrorId 'InvalidRecordLayout,Show-NCLogViewer'
@@ -47,6 +42,44 @@ Describe 'Show-NCLogViewer' {
 
         It 'パラメーターの範囲検証' {
             { Show-NCLogViewer -RecordSize 4 } | Should -Throw -ErrorId 'ParameterArgumentValidationError,Show-NCLogViewer'
+        }
+    }
+
+    Context '画面定義 (XAML) と画面処理の対応 (全 OS)' {
+        BeforeAll {
+            $moduleRoot = Join-Path $PSScriptRoot '..' 'NCLogTools'
+            $script:xamlText = Get-Content -LiteralPath (Join-Path $moduleRoot 'Viewer' 'NCLogViewer.xaml') -Raw
+            $script:viewerCode = Get-Content -LiteralPath (Join-Path $moduleRoot 'Viewer' 'Start-NCLogViewerWindow.ps1') -Raw
+            $block = [regex]::Match($viewerCode, "(?s)foreach \(\`$name in @\((.*?)\)\) \{").Groups[1].Value
+            $script:registered = @([regex]::Matches($block, "'(\w+)'") | ForEach-Object { $_.Groups[1].Value })
+        }
+
+        It 'XAML は整形式の XML' {
+            { [xml]$xamlText } | Should -Not -Throw
+        }
+
+        It '画面処理が使う要素はすべて登録済みで、XAML にある' {
+            $names = @([regex]::Matches($xamlText, 'x:Name="(\w+)"') | ForEach-Object { $_.Groups[1].Value })
+            $registered.Count | Should -BeGreaterThan 30
+            $registered | Where-Object { $_ -notin $names } | Should -BeNullOrEmpty
+            $used = @([regex]::Matches($viewerCode, '(?:\$ui|\$ctx\.UI|\$Context\.UI)\.(\w+)') |
+                    ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+            $used | Where-Object { $_ -notin $registered } | Should -BeNullOrEmpty
+        }
+
+        It '16進ダンプ・ファイル情報のタブは既定で非表示 ([ツール] メニューで表示)' {
+            $xamlText | Should -Match '<TabItem x:Name="HexTab"[^>]*Visibility="Collapsed"'
+            $xamlText | Should -Match '<TabItem x:Name="InfoTab"[^>]*Visibility="Collapsed"'
+            $xamlText | Should -Match 'x:Name="MenuShowHex"[^>]*IsCheckable="True"'
+            $xamlText | Should -Match 'x:Name="MenuShowInfo"[^>]*IsCheckable="True"'
+        }
+
+        It '画面処理が呼ぶ NCLog 関数はすべてモジュール内にある' {
+            $all = (Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot '..' 'NCLogTools') -Recurse -Filter '*.ps1' |
+                    Get-Content -Raw) -join "`n"
+            $defined = @([regex]::Matches($all, '(?m)^function ([\w-]+)') | ForEach-Object { $_.Groups[1].Value })
+            $called = @([regex]::Matches($viewerCode, '\b([A-Z][a-z]+-NCLog\w+)') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+            $called | Where-Object { $_ -notin $defined } | Should -BeNullOrEmpty
         }
     }
 
@@ -67,22 +100,38 @@ Describe 'Show-NCLogViewer' {
                 Pop-Location
             }
             Should -Invoke -ModuleName NCLogTools -CommandName Start-NCLogViewerWindow -Times 1 -Exactly -ParameterFilter {
-                $LiteralFilePath -eq $log.FullName -and $HeaderSize -eq 0x20 -and $RecordSize -eq 16 -and
+                $LiteralFilePath.Count -eq 1 -and $LiteralFilePath[0] -eq $log.FullName -and $HeaderSize -eq 0x20 -and $RecordSize -eq 16 -and
                 $Value40Offset -eq 8 -and $Value21Offset -eq 4
+            }
+        }
+
+        It 'ワイルドカードに一致したファイルをすべて (重複なしで) ウィンドウに渡す' {
+            Show-NCLogViewer -Path (Join-Path $TestDrive 'NCLog_view*.BIN'), $log.FullName
+            Should -Invoke -ModuleName NCLogTools -CommandName Start-NCLogViewerWindow -Times 1 -Exactly -ParameterFilter {
+                $LiteralFilePath.Count -eq 2 -and $LiteralFilePath[0] -eq $log.FullName -and
+                $LiteralFilePath[1] -eq (Join-Path $TestDrive 'NCLog_view2.BIN')
+            }
+        }
+
+        It '一部のパスが見つからなくても、エラーを報告して残りを開く' {
+            Show-NCLogViewer -LiteralPath (Join-Path $TestDrive 'missing.BIN'), $log.FullName -ErrorVariable err -ErrorAction SilentlyContinue
+            $err[0].FullyQualifiedErrorId | Should -Be 'PathNotFound,Show-NCLogViewer'
+            Should -Invoke -ModuleName NCLogTools -CommandName Start-NCLogViewerWindow -Times 1 -Exactly -ParameterFilter {
+                $LiteralFilePath.Count -eq 1 -and $LiteralFilePath[0] -eq $log.FullName
             }
         }
 
         It 'LiteralPath は [ ] を含むファイル名をそのまま開く' {
             Show-NCLogViewer -LiteralPath $bracket.FullName
             Should -Invoke -ModuleName NCLogTools -CommandName Start-NCLogViewerWindow -Times 1 -Exactly -ParameterFilter {
-                $LiteralFilePath -eq $bracket.FullName
+                $LiteralFilePath.Count -eq 1 -and $LiteralFilePath[0] -eq $bracket.FullName
             }
         }
 
         It 'パス省略時はファイルなしで既定レイアウトのウィンドウを開く' {
             Show-NCLogViewer
             Should -Invoke -ModuleName NCLogTools -CommandName Start-NCLogViewerWindow -Times 1 -Exactly -ParameterFilter {
-                [string]::IsNullOrEmpty($LiteralFilePath) -and $HeaderSize -eq 0x20 -and $RecordSize -eq 16 -and
+                @($LiteralFilePath).Count -eq 0 -and $HeaderSize -eq 0x20 -and $RecordSize -eq 16 -and
                 $Value40Offset -eq 4 -and $Value21Offset -eq 8
             }
         }

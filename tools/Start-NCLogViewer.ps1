@@ -8,12 +8,13 @@
     NCLogTools モジュールを読み込み、Show-NCLogViewer でビューアーを表示します。
 
     - 引数なし      : 空のビューアーを表示します ([開く] またはドラッグ＆ドロップでファイルを指定)。
-    - ファイル指定  : そのファイルを開きます。複数指定された場合は先頭の1ファイルだけを開きます。
+    - ファイル指定  : 指定したファイルをすべて開きます (複数可)。
+    - フォルダ指定  : フォルダ直下の .BIN をすべて開きます。
 
     コンソールは非表示で起動されるため、エラーはメッセージボックスで表示します。
 
 .PARAMETER Path
-    開く NCLog ファイル。ワイルドカードとして解釈しません。
+    開く NCLog ファイルまたはフォルダ (複数可)。ワイルドカードとして解釈しません。
     ドラッグ＆ドロップされたパスがここに入ります。
 
 .INPUTS
@@ -67,13 +68,29 @@ try {
     $manifest = Join-Path -Path $PSScriptRoot -ChildPath '..' -AdditionalChildPath 'NCLogTools', 'NCLogTools.psd1'
     Import-Module -Name ([System.IO.Path]::GetFullPath($manifest)) -Force -ErrorAction Stop
 
-    $targets = @($Path | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    if ($targets.Count -gt 1) {
-        Write-Warning "一度に開けるのは1ファイルです。先頭のファイルを開きます: $($targets[0])"
+    # フォルダは直下の .BIN に展開する。見つからないパスは知らせたうえで、残りを開く
+    $targets = [System.Collections.Generic.List[string]]::new()
+    $missing = [System.Collections.Generic.List[string]]::new()
+    foreach ($p in @($Path | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+        $full = [System.IO.Path]::GetFullPath($p)
+        if ([System.IO.Directory]::Exists($full)) {
+            foreach ($f in [System.IO.Directory]::GetFiles($full) | Sort-Object) {
+                if ([System.IO.Path]::GetExtension($f) -ieq '.bin') { $targets.Add($f) }
+            }
+        }
+        elseif ([System.IO.File]::Exists($full)) {
+            $targets.Add($full)
+        }
+        else {
+            $missing.Add($full)
+        }
+    }
+    if ($missing.Count -gt 0) {
+        Show-NCLogLauncherError -Message ("次のファイルが見つかりません。`n`n" + ($missing -join "`n"))
     }
 
     if ($targets.Count -ge 1) {
-        Show-NCLogViewer -LiteralPath $targets[0] -ErrorAction Stop
+        Show-NCLogViewer -LiteralPath $targets.ToArray() -ErrorAction Stop
     }
     else {
         Show-NCLogViewer -ErrorAction Stop
