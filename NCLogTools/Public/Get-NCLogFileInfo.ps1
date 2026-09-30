@@ -41,7 +41,7 @@
         $info.Samples | ForEach-Object { $_.Words } | Format-Table
 
         先頭5レコードを 4 byte ごとに Int32 / Single として表示し、どの位置が
-        レーザー出力 (%) やワイヤ速度 (mm/min) らしい値かを確認します。
+        レーザー出力 (W) やワイヤ速度 (mm/min) らしい値かを確認します。
 
     .EXAMPLE
         Get-NCLogFileInfo .\NCLog.BIN -RecordSize 20 | Select-Object RecordCount, TrailingBytes

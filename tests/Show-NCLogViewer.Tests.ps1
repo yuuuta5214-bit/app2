@@ -74,6 +74,18 @@ Describe 'Show-NCLogViewer' {
             $xamlText | Should -Match 'x:Name="MenuShowInfo"[^>]*IsCheckable="True"'
         }
 
+        It 'グラフの値の取得は右クリック (左ボタンはドラッグ・ダブルクリック専用)' {
+            $viewerCode | Should -Match 'Add_MouseRightButtonUp\(\{(?s:.*?)Set-NCLogViewerPickedRecord'
+            $leftUp = [regex]::Match($viewerCode, '(?s)Add_MouseLeftButtonUp\(\{(.*?)\}\)').Groups[1].Value
+            $leftUp | Should -Not -BeNullOrEmpty
+            $leftUp | Should -Not -Match 'Set-NCLogViewerPickedRecord'
+        }
+
+        It 'レーザー出力の単位は W で表示する' {
+            $xamlText | Should -Match 'ADD_40_0 レーザー出力 \(W\)'
+            $xamlText | Should -Not -Match 'レーザー出力 \(%\)'
+        }
+
         It '画面処理が呼ぶ NCLog 関数はすべてモジュール内にある' {
             $all = (Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot '..' 'NCLogTools') -Recurse -Filter '*.ps1' |
                     Get-Content -Raw) -join "`n"

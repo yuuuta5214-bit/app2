@@ -117,7 +117,7 @@
         </StackPanel>
         <TextBlock Style="{StaticResource Hint}" VerticalAlignment="Center" Margin="16,0,0,0" TextWrapping="NoWrap"
                    TextTrimming="CharacterEllipsis"
-                   Text="手順:  ① BIN を開く  →  ② グラフをクリックして値を取得  →  ③ 割合を入力  →  ④ 一括 CSV 出力"/>
+                   Text="手順:  ① BIN を開く  →  ② グラフを右クリックして値を取得  →  ③ 割合を入力  →  ④ 一括 CSV 出力"/>
       </DockPanel>
     </Border>
 
@@ -193,11 +193,11 @@
               </Grid.RowDefinitions>
               <TextBlock Grid.Row="0" Grid.Column="0" Text="② レーザー出力" VerticalAlignment="Center"/>
               <TextBox Grid.Row="0" Grid.Column="1" x:Name="LaserBox" Style="{StaticResource ValueBox}"
-                       ToolTip="グラフをクリックすると ADD_40_0 の値が入ります。直接入力もできます"/>
+                       ToolTip="グラフを右クリックすると ADD_40_0 の値が入ります。直接入力もできます"/>
               <TextBlock Grid.Row="0" Grid.Column="2" Text="W" VerticalAlignment="Center" Width="56"/>
               <TextBlock Grid.Row="1" Grid.Column="0" Text="② ワイヤ速度" VerticalAlignment="Center"/>
               <TextBox Grid.Row="1" Grid.Column="1" x:Name="WireBox" Style="{StaticResource ValueBox}"
-                       ToolTip="グラフをクリックすると ADD_21_0 の値が入ります。直接入力もできます"/>
+                       ToolTip="グラフを右クリックすると ADD_21_0 の値が入ります。直接入力もできます"/>
               <TextBlock Grid.Row="1" Grid.Column="2" Text="mm/min" VerticalAlignment="Center" Width="56"/>
               <TextBlock Grid.Row="2" Grid.Column="0" Text="③ 割合" VerticalAlignment="Center" FontWeight="SemiBold"/>
               <TextBox Grid.Row="2" Grid.Column="1" x:Name="RatioBox" Style="{StaticResource ValueBox}"
@@ -205,7 +205,7 @@
               <TextBlock Grid.Row="2" Grid.Column="2" Text="%" VerticalAlignment="Center" Width="56"/>
             </Grid>
             <TextBlock x:Name="PickedText" Style="{StaticResource Hint}" Margin="0,4,0,0"
-                       Text="グラフをクリックすると、その位置のレーザー出力とワイヤ速度が入ります。"/>
+                       Text="グラフを右クリックすると、その位置のレーザー出力とワイヤ速度が入ります。"/>
             <TextBlock Style="{StaticResource Hint}" Text="割合を入力して Enter を押すと、次のファイルに移ります。"/>
             <Border Background="#F1F3F5" CornerRadius="3" Padding="6,4" Margin="0,6,0,0">
               <StackPanel>
@@ -248,7 +248,7 @@
       <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" Background="#E9ECEF" ToolTip="ドラッグで幅を変更"/>
 
       <TabControl x:Name="MainTabs" Grid.Column="2" Margin="0,6,6,6">
-        <!-- グラフ: クリックした位置の値を出力ファイル名に使う -->
+        <!-- グラフ: 右クリックした位置の値を出力ファイル名に使う -->
         <TabItem x:Name="ChartTab" Header="グラフ">
           <DockPanel Margin="4">
             <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,6">
@@ -259,7 +259,7 @@
               <Button x:Name="RangeApplyButton" Content="表示"/>
               <Button x:Name="RangeResetButton" Content="全体"/>
               <TextBlock Foreground="#666" VerticalAlignment="Center" Margin="12,0,0,0"
-                         Text="クリック: その位置の値を取得 / ドラッグ: 移動 / ホイール: 拡大・縮小 / ダブルクリック: 全体"/>
+                         Text="右クリック: その位置の値を取得 / ドラッグ: 移動 / ホイール: 拡大・縮小 / ダブルクリック: 全体"/>
             </StackPanel>
             <TextBlock DockPanel.Dock="Bottom" x:Name="HoverText" FontFamily="Consolas" Margin="60,4,0,0" Text=" "/>
             <Grid DockPanel.Dock="Bottom" Margin="60,2,0,0">
@@ -287,7 +287,7 @@
                   <TextBlock x:Name="ChartEmptyText" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#888"
                              FontSize="15" TextAlignment="Center" IsHitTestVisible="False"
                              Text="BIN ファイルを開くか、ウィンドウにドラッグ＆ドロップしてください。&#x0a;(複数ファイル・フォルダも可)"/>
-                  <TextBlock Text="ADD_40_0 レーザー出力 (%)" Foreground="{StaticResource Value40Brush}" FontWeight="SemiBold"
+                  <TextBlock Text="ADD_40_0 レーザー出力 (W)" Foreground="{StaticResource Value40Brush}" FontWeight="SemiBold"
                              Margin="6,2" IsHitTestVisible="False" HorizontalAlignment="Left" VerticalAlignment="Top"/>
                 </Grid>
               </Border>
@@ -330,7 +330,7 @@
               <DataGrid.Columns>
                 <DataGridTextColumn Header="No." Binding="{Binding RecordNumber}" Width="90"/>
                 <DataGridTextColumn Header="アドレス" Binding="{Binding Address}" Width="100"/>
-                <DataGridTextColumn Header="ADD_40_0 レーザー出力 (%)" Binding="{Binding Value40, StringFormat={}{0:0.######}}" Width="220"/>
+                <DataGridTextColumn Header="ADD_40_0 レーザー出力 (W)" Binding="{Binding Value40, StringFormat={}{0:0.######}}" Width="220"/>
                 <DataGridTextColumn Header="ADD_21_0 ワイヤ速度 (mm/min)" Binding="{Binding Value21, StringFormat={}{0:0.######}}" Width="230"/>
               </DataGrid.Columns>
             </DataGrid>

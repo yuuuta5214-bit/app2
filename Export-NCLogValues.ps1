@@ -14,7 +14,7 @@
         Import-Module .\NCLogTools
         Get-Help Export-NCLogValue -Full
 
-    - ADD_40_0: amPrcLg_output_pwr (実レーザー出力パワー %)
+    - ADD_40_0: amPrcLg_output_pwr (実レーザー出力パワー W)
     - ADD_21_0: realWirFeed_vel    (実ワイヤフィード速度 mm/min)
 
 .PARAMETER Path

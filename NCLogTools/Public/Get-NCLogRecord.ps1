@@ -7,7 +7,7 @@
         ワイヤレーザー3Dプリンターの NCLog バイナリファイルを先頭からストリームで読み、
         1レコードごとに次の2値を「ペアのまま」NCLog.Record オブジェクトとして出力します。
 
-        - Value40 = ADD_40_0: amPrcLg_output_pwr (実レーザー出力パワー %)
+        - Value40 = ADD_40_0: amPrcLg_output_pwr (実レーザー出力パワー W)
         - Value21 = ADD_21_0: realWirFeed_vel    (実ワイヤフィード速度 mm/min)
 
         既定のバイナリレイアウト (Get-NCLogFileInfo で実ファイルを確認してください):
@@ -58,9 +58,9 @@
 
     .EXAMPLE
         Get-ChildItem 'C:\Logs' -Filter 'NCLog*.BIN' | Get-NCLogRecord -HideZeros |
-            Where-Object Value40 -gt 50
+            Where-Object Value40 -gt 1000
 
-        フォルダ内の全ログから、レーザー出力 50% 超のレコードを抽出します。
+        フォルダ内の全ログから、レーザー出力 1000 W 超のレコードを抽出します。
 
     .EXAMPLE
         Get-NCLogRecord 'C:\Logs\NCLog_*.BIN' | Select-Object -First 100

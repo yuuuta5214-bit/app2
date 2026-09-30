@@ -383,17 +383,20 @@ function Start-NCLogViewerWindow {
                         Set-NCLogViewerChartRange -Context $ctx -Start 0 -End ($ctx.Data.RecordCount - 1)
                         return
                     }
-                    # 動かさずに離したらクリック (値の取得)、動かしたらドラッグ (移動)
-                    $ctx.Drag = @{ X = $e.GetPosition($s).X; Start = $ctx.ViewStart; End = $ctx.ViewEnd; Moved = $false }
+                    $ctx.Drag = @{ X = $e.GetPosition($s).X; Start = $ctx.ViewStart; End = $ctx.ViewEnd }
                     [void]$s.CaptureMouse()
                 }
             })
         $canvas.Add_MouseLeftButtonUp({
                 param($s, $e)
-                $drag = $ctx.Drag
                 $ctx.Drag = $null
                 $s.ReleaseMouseCapture()
-                if ($null -eq $drag -or $drag.Moved) { return }
+            })
+        # 右クリック: その位置のレーザー出力・ワイヤ速度を出力ファイル名の値として取得する
+        # (左ボタンはドラッグ・ダブルクリックに使うため、誤って値が変わらないよう右ボタンに分けている)
+        $canvas.Add_MouseRightButtonUp({
+                param($s, $e)
+                $e.Handled = $true
                 Invoke-NCLogViewerAction -Context $ctx -Action {
                     if ($null -eq $ctx.Data -or $ctx.Data.RecordCount -eq 0) { return }
                     $index = Get-NCLogChartIndex -X $e.GetPosition($s).X -Width $s.ActualWidth `
@@ -409,12 +412,8 @@ function Start-NCLogViewerWindow {
                     $width = [Math]::Max(1.0, $s.ActualWidth)
                     $drag = $ctx.Drag
                     if ($null -ne $drag -and $e.LeftButton -eq [System.Windows.Input.MouseButtonState]::Pressed) {
-                        # 手ぶれでクリックがドラッグにならないよう、4px 以上動いたらドラッグとみなす
-                        if ($drag.Moved -or [Math]::Abs($drag.X - $x) -ge 4) {
-                            $drag.Moved = $true
-                            $shift = [Math]::Round(($drag.X - $x) / $width * ($drag.End - $drag.Start))
-                            Set-NCLogViewerChartRange -Context $ctx -Start ($drag.Start + $shift) -End ($drag.End + $shift)
-                        }
+                        $shift = [Math]::Round(($drag.X - $x) / $width * ($drag.End - $drag.Start))
+                        Set-NCLogViewerChartRange -Context $ctx -Start ($drag.Start + $shift) -End ($drag.End + $shift)
                     }
                     Update-NCLogViewerChartCursor -Context $ctx -X $x -Width $width
                 }
@@ -533,8 +532,8 @@ function Show-NCLogViewerHowTo {
             '① BIN ファイルを開く'
             '    [開く] (Ctrl+O) で複数選択、またはファイル・フォルダをウィンドウにドラッグ＆ドロップ'
             ''
-            '② グラフをクリックして値を取得'
-            '    クリックした位置のレーザー出力とワイヤ速度が入ります (直接入力も可)'
+            '② グラフを右クリックして値を取得'
+            '    右クリックした位置のレーザー出力とワイヤ速度が入ります (直接入力も可)'
             ''
             '③ 割合を入力'
             '    Enter で次のファイルに移るので、続けて入力できます'
@@ -545,7 +544,7 @@ function Show-NCLogViewerHowTo {
             '    一覧で緑色の行が出力できるファイルです'
             ''
             '【その他】'
-            '    グラフ: ドラッグで移動 / ホイールで拡大・縮小 / ダブルクリックで全体'
+            '    グラフ: 右クリックで値を取得 / ドラッグで移動 / ホイールで拡大・縮小 / ダブルクリックで全体'
             '    [ツール] メニュー: 16進ダンプ・ファイル情報・レイアウト設定の表示'
         ) -join "`n")
 }
@@ -690,7 +689,7 @@ function Add-NCLogViewerFile {
     }
 
     $opened = $target.Files.Count - ($problems.Count - $target.Messages.Count)
-    $Context.UI.StatusText.Text = "$opened ファイルを開きました。グラフをクリックして値を取得し、割合を入力してください。"
+    $Context.UI.StatusText.Text = "$opened ファイルを開きました。グラフを右クリックして値を取得し、割合を入力してください。"
     if ($problems.Count -gt 0) {
         $shown = @($problems | Select-Object -First 15)
         $more = if ($problems.Count -gt $shown.Count) { "`n… ほか $($problems.Count - $shown.Count) 件" } else { '' }
@@ -882,18 +881,18 @@ function Update-NCLogViewerPickedText {
     $Context.UI.PickedText.Text = if ($null -ne $current -and $current.PickedRecord -ge 0 -and
         $current.PickedRecord -lt $current.Data.RecordCount) {
         [string]::Format([System.Globalization.CultureInfo]::InvariantCulture,
-            'グラフの No.{0} から取得しました (ADD_40_0 = {1:0.######} / ADD_21_0 = {2:0.######})。緑の線が取得位置です。',
+            'グラフの No.{0} から取得しました (ADD_40_0 = {1:0.######} W / ADD_21_0 = {2:0.######} mm/min)。緑の線が取得位置です。',
             $current.PickedRecord, $current.Data.Value40[$current.PickedRecord], $current.Data.Value21[$current.PickedRecord])
     }
     else {
-        'グラフをクリックすると、その位置のレーザー出力とワイヤ速度が入ります。'
+        'グラフを右クリックすると、その位置のレーザー出力とワイヤ速度が入ります。'
     }
 }
 
 function Set-NCLogViewerPickedRecord {
     <#
     .SYNOPSIS
-        グラフでクリックしたレコードのレーザー出力・ワイヤ速度を、選択中ファイルの出力ファイル名の値にする。
+        グラフで右クリックしたレコードのレーザー出力・ワイヤ速度を、選択中ファイルの出力ファイル名の値にする。
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
         Justification = '画面の入力値を更新するだけ')]
@@ -910,7 +909,7 @@ function Set-NCLogViewerPickedRecord {
     $v21 = $data.Value21[$Index]
     if (-not ([float]::IsFinite($v40) -and [float]::IsFinite($v21))) {
         throw [System.InvalidOperationException]::new(
-            "No.$Index は無効レコード (NaN / Infinity) のため値を取得できません。別の位置をクリックしてください。")
+            "No.$Index は無効レコード (NaN / Infinity) のため値を取得できません。別の位置を右クリックしてください。")
     }
 
     $current.LaserText = Format-NCLogFileNameValue -Value $v40
@@ -1243,9 +1242,9 @@ function Update-NCLogViewerChartCursor {
     }
 
     $Context.UI.HoverText.Text = [string]::Format([System.Globalization.CultureInfo]::InvariantCulture,
-        'No.{0}   ADD_40_0 = {1:0.######}   ADD_21_0 = {2:0.######} mm/min{3}',
+        'No.{0}   ADD_40_0 = {1:0.######} W   ADD_21_0 = {2:0.######} mm/min{3}',
         $index, $data.Value40[$index], $data.Value21[$index],
-        $(if ([float]::IsFinite($data.Value40[$index]) -and [float]::IsFinite($data.Value21[$index])) { '   (クリックで取得)' } else { '   (無効レコード)' }))
+        $(if ([float]::IsFinite($data.Value40[$index]) -and [float]::IsFinite($data.Value21[$index])) { '   (右クリックで取得)' } else { '   (無効レコード)' }))
 }
 
 function Select-NCLogViewerOutputDirectory {

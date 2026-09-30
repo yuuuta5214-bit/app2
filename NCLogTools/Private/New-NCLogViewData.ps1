@@ -66,7 +66,7 @@
     $s40 = Measure-NCLogViewValue -Value $v40 -Valid $valid
     $s21 = Measure-NCLogViewValue -Value $v21 -Valid $valid
     $statistics = @(
-        [pscustomobject]@{ Parameter = 'ADD_40_0'; Description = 'レーザー出力パワー'; Unit = '%'
+        [pscustomobject]@{ Parameter = 'ADD_40_0'; Description = 'レーザー出力パワー'; Unit = 'W'
             Count = $s40.Count; Minimum = $s40.Minimum; Maximum = $s40.Maximum; Average = $s40.Average; StdDev = $s40.StdDev
         }
         [pscustomobject]@{ Parameter = 'ADD_21_0'; Description = 'ワイヤフィード速度'; Unit = 'mm/min'

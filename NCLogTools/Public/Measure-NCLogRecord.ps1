@@ -50,7 +50,7 @@
 
     begin {
         $definitions = @(
-            [pscustomobject]@{ Property = 'Value40'; Parameter = 'ADD_40_0'; Description = 'レーザー出力パワー'; Unit = '%' }
+            [pscustomobject]@{ Property = 'Value40'; Parameter = 'ADD_40_0'; Description = 'レーザー出力パワー'; Unit = 'W' }
             [pscustomobject]@{ Property = 'Value21'; Parameter = 'ADD_21_0'; Description = 'ワイヤフィード速度'; Unit = 'mm/min' }
         )
         # キー: SourceFile / 値: Property 名ごとの累積状態 (挿入順を保持)
