@@ -31,6 +31,28 @@
 - コマンドラインで `-` から始まる引数を渡すと、`Export-NCLogValues.ps1` にそのまま渡します
   (例: `NCLogExport.cmd -Path C:\Logs\NCLog_*.BIN -Format JSON -OutputPath all.json`)。
 
+## ビューアー (NCLogViewer.cmd)
+
+.BIN の中身を画面で確認できる GUI です (Windows 専用・閲覧のみ)。
+
+| 操作 | 動作 |
+|---|---|
+| `NCLogViewer.cmd` をダブルクリック | 空のビューアーを開く ([開く] / Ctrl+O、またはウィンドウへドラッグ＆ドロップ) |
+| .BIN ファイルを `NCLogViewer.cmd` にドラッグ＆ドロップ | そのファイルを開く (1ファイル) |
+
+| タブ | 内容 |
+|---|---|
+| レコード | No. / アドレス / ADD_40_0 (%) / ADD_21_0 (mm/min)。NaN・Infinity を含む無効レコードは赤。ダブルクリックで16進ダンプの該当位置へ |
+| 16進ダンプ | ヘッダー (黄) / レコード (偶数・奇数で交互) / 末尾の端数 (赤) を色分け。選択したバイトを Int8～Int64・Single・Double で表示 |
+| グラフ | 2値の推移。ホイールで拡大・縮小、ドラッグで移動、ダブルクリックで全体表示 |
+| ファイル情報 | サイズ・レコード数・無効レコード数・端数バイト・統計・ヘッダーの 4 byte ごとの解釈 |
+
+- ツールバーでヘッダー / レコードサイズ / 各値の位置を変えて [再解析] (Enter) できます。
+  **末尾の端数が 0 byte になり、グラフが自然な形になるレイアウト**が実機ログに合ったレイアウトです。
+- [CSV 出力] (Ctrl+E) は表示中のレイアウトで `Export-NCLogValue` と同じ CSV (UTF-8 BOM 付き) を作ります。
+- ファイルは読み取り専用で開き、変更しません。16MB を超えるファイルは開けません。
+- PowerShell からは `Show-NCLogViewer 'C:\Logs\NCLog_00000000_00003044.BIN'` で起動できます。
+
 ## 使い方 (PowerShell)
 
 ```powershell
@@ -44,6 +66,9 @@ Get-NCLogRecord 'C:\Logs\NCLog_*.BIN' | Measure-NCLogRecord
 
 # CSV に保存 (既存ファイルの上書きには -Force が必要)
 Export-NCLogValue 'C:\Logs\NCLog_*.BIN' -Format CSV -OutputPath .\out.csv -Statistics
+
+# GUI で閲覧 (Windows)
+Show-NCLogViewer 'C:\Logs\NCLog_00000000_00003044.BIN'
 
 # バイナリレイアウトの確認 (既定のオフセットが実機ログと合っているかの検証用)
 (Get-NCLogFileInfo .\NCLog_00000000_00003044.BIN).Samples[0].Words | Format-Table
@@ -73,3 +98,7 @@ Install-Module PSScriptAnalyzer -Scope CurrentUser -Force   # 任意 (未導入�
 ```
 
 GitHub Actions (`.github/workflows/pester.yml`) で windows-latest / ubuntu-latest の両方で実行されます。
+
+ビューアーの画面 (`NCLogTools/Viewer/`) は CI で表示できないため、自動テストは
+画面に依存しない処理 (`Private/`)、`Show-NCLogViewer` の引数処理、XAML の読み込み確認 (Windows) までです。
+画面の操作は手動で確認してください。

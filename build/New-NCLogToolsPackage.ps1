@@ -9,6 +9,7 @@
 
         NCLogTools-<version>\
           NCLogExport.cmd
+          NCLogViewer.cmd
           Export-NCLogValues.ps1
           README.md
           NCLogTools\ ...
@@ -50,12 +51,13 @@ $packageName = "NCLogTools-$version"
 
 $items = @(
     'NCLogExport.cmd'
+    'NCLogViewer.cmd'
     'Export-NCLogValues.ps1'
     'README.md'
     'NCLogTools'
     'tools'
 )
-$textExtensions = '.cmd', '.bat', '.ps1', '.psm1', '.psd1', '.ps1xml', '.md', '.txt'
+$textExtensions = '.cmd', '.bat', '.ps1', '.psm1', '.psd1', '.ps1xml', '.xaml', '.md', '.txt'
 
 $files = foreach ($item in $items) {
     $full = Join-Path $root $item

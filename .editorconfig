@@ -11,6 +11,12 @@ charset = utf-8-bom
 indent_style = space
 indent_size = 4
 
+# XAML は XML 宣言なしの UTF-8 (XamlReader へは UTF-8 で読み込んだ文字列を渡す)
+[*.xaml]
+charset = utf-8
+indent_style = space
+indent_size = 2
+
 [*.{yml,yaml}]
 charset = utf-8
 indent_style = space

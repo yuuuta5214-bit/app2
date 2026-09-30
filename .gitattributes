@@ -3,6 +3,7 @@
 *.psm1   text eol=crlf
 *.psd1   text eol=crlf
 *.ps1xml text eol=crlf
+*.xaml   text eol=crlf
 *.BIN    binary
 *.cmd    text eol=crlf
 *.bat    text eol=crlf

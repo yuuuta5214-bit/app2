@@ -1,0 +1,304 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="NCLog Viewer" Width="1180" Height="760" MinWidth="820" MinHeight="520"
+        WindowStartupLocation="CenterScreen" AllowDrop="True"
+        FontFamily="Yu Gothic UI, Meiryo UI, Segoe UI" FontSize="13">
+  <!--
+    NCLog Viewer の画面定義。Start-NCLogViewerWindow がモジュール同梱のこのファイルだけを読み込む。
+    イベント (x:Class / Click="...") は XamlReader では使えないため、処理はすべて PowerShell 側で登録する。
+  -->
+  <Window.Resources>
+    <SolidColorBrush x:Key="HeaderBrush" Color="#FFF3CD"/>
+    <SolidColorBrush x:Key="OddBrush" Color="#EEF4FF"/>
+    <SolidColorBrush x:Key="TrailingBrush" Color="#FFE0E0"/>
+    <SolidColorBrush x:Key="InvalidBrush" Color="#FFE0E0"/>
+    <SolidColorBrush x:Key="Value40Brush" Color="#D9480F"/>
+    <SolidColorBrush x:Key="Value21Brush" Color="#1864AB"/>
+
+    <Style TargetType="TextBox" x:Key="NumberBox">
+      <Setter Property="Width" Value="64"/>
+      <Setter Property="Margin" Value="4,0,10,0"/>
+      <Setter Property="VerticalContentAlignment" Value="Center"/>
+      <Setter Property="FontFamily" Value="Consolas"/>
+    </Style>
+    <Style TargetType="Button">
+      <Setter Property="Padding" Value="10,3"/>
+      <Setter Property="Margin" Value="0,0,6,0"/>
+    </Style>
+    <Style TargetType="DataGrid">
+      <Setter Property="AutoGenerateColumns" Value="False"/>
+      <Setter Property="IsReadOnly" Value="True"/>
+      <Setter Property="CanUserAddRows" Value="False"/>
+      <Setter Property="CanUserDeleteRows" Value="False"/>
+      <Setter Property="CanUserReorderColumns" Value="False"/>
+      <Setter Property="CanUserSortColumns" Value="False"/>
+      <Setter Property="HeadersVisibility" Value="Column"/>
+      <Setter Property="GridLinesVisibility" Value="Vertical"/>
+      <Setter Property="VerticalGridLinesBrush" Value="#E0E0E0"/>
+      <Setter Property="EnableRowVirtualization" Value="True"/>
+      <Setter Property="VirtualizingPanel.IsVirtualizing" Value="True"/>
+      <Setter Property="VirtualizingPanel.VirtualizationMode" Value="Recycling"/>
+      <Setter Property="VirtualizingPanel.ScrollUnit" Value="Item"/>
+    </Style>
+    <Style TargetType="TextBlock" x:Key="Caption">
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Margin" Value="0,10,0,4"/>
+    </Style>
+  </Window.Resources>
+
+  <DockPanel>
+    <Menu DockPanel.Dock="Top">
+      <MenuItem Header="ファイル(_F)">
+        <MenuItem x:Name="MenuOpen" Header="開く(_O)..." InputGestureText="Ctrl+O"/>
+        <MenuItem x:Name="MenuExport" Header="CSV 出力(_E)..." InputGestureText="Ctrl+E" IsEnabled="False"/>
+        <Separator/>
+        <MenuItem x:Name="MenuExit" Header="終了(_X)"/>
+      </MenuItem>
+      <MenuItem Header="ヘルプ(_H)">
+        <MenuItem x:Name="MenuAbout" Header="バージョン情報(_A)"/>
+      </MenuItem>
+    </Menu>
+
+    <!-- ツールバー: ファイル操作とレイアウト指定 -->
+    <Border DockPanel.Dock="Top" BorderBrush="#D0D0D0" BorderThickness="0,0,0,1" Padding="8,6">
+      <WrapPanel VerticalAlignment="Center">
+        <Button x:Name="OpenButton" Content="開く..."/>
+        <Button x:Name="ExportButton" Content="CSV 出力..." IsEnabled="False"/>
+        <Separator Width="1" Margin="6,0,12,0" Background="#C0C0C0"/>
+        <TextBlock Text="ヘッダー" VerticalAlignment="Center"/>
+        <TextBox x:Name="HeaderSizeBox" Style="{StaticResource NumberBox}" ToolTip="ファイル先頭ヘッダーのバイト数 (10進 または 0x20 形式)"/>
+        <TextBlock Text="レコード" VerticalAlignment="Center"/>
+        <TextBox x:Name="RecordSizeBox" Style="{StaticResource NumberBox}" ToolTip="1レコードのバイト数"/>
+        <TextBlock Text="ADD_40_0 位置" VerticalAlignment="Center"/>
+        <TextBox x:Name="Value40OffsetBox" Style="{StaticResource NumberBox}" ToolTip="レコード先頭から ADD_40_0 (float32) までのバイト数"/>
+        <TextBlock Text="ADD_21_0 位置" VerticalAlignment="Center"/>
+        <TextBox x:Name="Value21OffsetBox" Style="{StaticResource NumberBox}" ToolTip="レコード先頭から ADD_21_0 (float32) までのバイト数"/>
+        <Button x:Name="ApplyLayoutButton" Content="再解析" IsEnabled="False" ToolTip="入力したレイアウトで読み直します (Enter キーでも実行)"/>
+        <Button x:Name="ResetLayoutButton" Content="既定値" ToolTip="起動時のレイアウトに戻します"/>
+      </WrapPanel>
+    </Border>
+
+    <StatusBar DockPanel.Dock="Bottom">
+      <StatusBarItem>
+        <TextBlock x:Name="StatusText" Text="ファイルを開くか、ウィンドウにドラッグ＆ドロップしてください。"/>
+      </StatusBarItem>
+      <Separator/>
+      <StatusBarItem HorizontalAlignment="Right">
+        <TextBlock x:Name="SelectionText" FontFamily="Consolas"/>
+      </StatusBarItem>
+    </StatusBar>
+
+    <TabControl x:Name="MainTabs" Margin="6">
+      <!-- ① レコード表 -->
+      <TabItem x:Name="RecordTab" Header="レコード">
+        <DockPanel Margin="4">
+          <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,6">
+            <TextBlock Text="レコード番号" VerticalAlignment="Center"/>
+            <TextBox x:Name="RecordJumpBox" Style="{StaticResource NumberBox}" Width="90"/>
+            <Button x:Name="RecordJumpButton" Content="移動"/>
+            <TextBlock Foreground="#666" VerticalAlignment="Center" Margin="12,0,0,0"
+                       Text="ダブルクリックで16進ダンプの該当位置を表示します。赤い行は NaN / Infinity を含む無効レコード (CSV・統計の対象外) です。"/>
+          </StackPanel>
+          <DataGrid x:Name="RecordGrid" SelectionMode="Single" SelectionUnit="FullRow" FontFamily="Consolas">
+            <DataGrid.RowStyle>
+              <Style TargetType="DataGridRow">
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding IsValid}" Value="False">
+                    <Setter Property="Background" Value="{StaticResource InvalidBrush}"/>
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </DataGrid.RowStyle>
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="No." Binding="{Binding RecordNumber}" Width="90"/>
+              <DataGridTextColumn Header="アドレス" Binding="{Binding Address}" Width="100"/>
+              <DataGridTextColumn Header="ADD_40_0 レーザー出力 (%)" Binding="{Binding Value40, StringFormat={}{0:0.######}}" Width="220"/>
+              <DataGridTextColumn Header="ADD_21_0 ワイヤ速度 (mm/min)" Binding="{Binding Value21, StringFormat={}{0:0.######}}" Width="230"/>
+            </DataGrid.Columns>
+          </DataGrid>
+        </DockPanel>
+      </TabItem>
+
+      <!-- ② 16進ダンプ -->
+      <TabItem x:Name="HexTab" Header="16進ダンプ">
+        <Grid Margin="4">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="300"/>
+          </Grid.ColumnDefinitions>
+          <DataGrid x:Name="HexGrid" Grid.Column="0" SelectionMode="Single" SelectionUnit="Cell"
+                    FontFamily="Consolas" GridLinesVisibility="None" RowHeight="20">
+            <DataGrid.RowStyle>
+              <Style TargetType="DataGridRow">
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding Band}" Value="Header">
+                    <Setter Property="Background" Value="{StaticResource HeaderBrush}"/>
+                  </DataTrigger>
+                  <DataTrigger Binding="{Binding Band}" Value="Odd">
+                    <Setter Property="Background" Value="{StaticResource OddBrush}"/>
+                  </DataTrigger>
+                  <DataTrigger Binding="{Binding Band}" Value="Trailing">
+                    <Setter Property="Background" Value="{StaticResource TrailingBrush}"/>
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </DataGrid.RowStyle>
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="アドレス" Binding="{Binding Address}" Width="80" Foreground="#555"/>
+              <DataGridTextColumn Header="Rec" Binding="{Binding Record}" Width="56" Foreground="#888"/>
+              <DataGridTextColumn Header="00" Binding="{Binding Hex[0]}" Width="26"/>
+              <DataGridTextColumn Header="01" Binding="{Binding Hex[1]}" Width="26"/>
+              <DataGridTextColumn Header="02" Binding="{Binding Hex[2]}" Width="26"/>
+              <DataGridTextColumn Header="03" Binding="{Binding Hex[3]}" Width="30"/>
+              <DataGridTextColumn Header="04" Binding="{Binding Hex[4]}" Width="26"/>
+              <DataGridTextColumn Header="05" Binding="{Binding Hex[5]}" Width="26"/>
+              <DataGridTextColumn Header="06" Binding="{Binding Hex[6]}" Width="26"/>
+              <DataGridTextColumn Header="07" Binding="{Binding Hex[7]}" Width="30"/>
+              <DataGridTextColumn Header="08" Binding="{Binding Hex[8]}" Width="26"/>
+              <DataGridTextColumn Header="09" Binding="{Binding Hex[9]}" Width="26"/>
+              <DataGridTextColumn Header="0A" Binding="{Binding Hex[10]}" Width="26"/>
+              <DataGridTextColumn Header="0B" Binding="{Binding Hex[11]}" Width="30"/>
+              <DataGridTextColumn Header="0C" Binding="{Binding Hex[12]}" Width="26"/>
+              <DataGridTextColumn Header="0D" Binding="{Binding Hex[13]}" Width="26"/>
+              <DataGridTextColumn Header="0E" Binding="{Binding Hex[14]}" Width="26"/>
+              <DataGridTextColumn Header="0F" Binding="{Binding Hex[15]}" Width="30"/>
+              <DataGridTextColumn Header="ASCII" Binding="{Binding Ascii}" Width="150"/>
+            </DataGrid.Columns>
+          </DataGrid>
+
+          <!-- 選択位置の数値解釈 -->
+          <DockPanel Grid.Column="1" Margin="10,0,0,0">
+            <StackPanel DockPanel.Dock="Top">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="オフセット" VerticalAlignment="Center"/>
+                <TextBox x:Name="OffsetBox" Style="{StaticResource NumberBox}" Width="100"
+                         ToolTip="10進 または 0x1F0 形式。Enter で移動"/>
+                <Button x:Name="OffsetJumpButton" Content="移動"/>
+              </StackPanel>
+              <TextBlock Style="{StaticResource Caption}" Text="選択位置の値 (リトルエンディアン)"/>
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+              <TextBlock Style="{StaticResource Caption}" Text="色の意味"/>
+              <StackPanel Orientation="Horizontal" Margin="0,2">
+                <Border Width="16" Height="12" Background="{StaticResource HeaderBrush}" BorderBrush="#AAA" BorderThickness="1" Margin="0,0,6,0"/>
+                <TextBlock Text="ヘッダー"/>
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" Margin="0,2">
+                <Border Width="16" Height="12" Background="White" BorderBrush="#AAA" BorderThickness="1" Margin="0,0,6,0"/>
+                <Border Width="16" Height="12" Background="{StaticResource OddBrush}" BorderBrush="#AAA" BorderThickness="1" Margin="0,0,6,0"/>
+                <TextBlock Text="レコード (偶数 / 奇数番号)"/>
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" Margin="0,2">
+                <Border Width="16" Height="12" Background="{StaticResource TrailingBrush}" BorderBrush="#AAA" BorderThickness="1" Margin="0,0,6,0"/>
+                <TextBlock Text="末尾の端数 (レコード外)"/>
+              </StackPanel>
+              <TextBlock Foreground="#666" TextWrapping="Wrap" Margin="0,6,0,0"
+                         Text="色は各行の先頭バイトの位置で決まります。"/>
+            </StackPanel>
+            <DataGrid x:Name="InspectorGrid" FontFamily="Consolas" SelectionUnit="CellOrRowHeader">
+              <DataGrid.Columns>
+                <DataGridTextColumn Header="型" Binding="{Binding Type}" Width="120"/>
+                <DataGridTextColumn Header="値" Binding="{Binding Value}" Width="*"/>
+              </DataGrid.Columns>
+            </DataGrid>
+          </DockPanel>
+        </Grid>
+      </TabItem>
+
+      <!-- ③ グラフ -->
+      <TabItem x:Name="ChartTab" Header="グラフ">
+        <DockPanel Margin="4">
+          <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,6">
+            <TextBlock Text="表示範囲 (レコード番号)" VerticalAlignment="Center"/>
+            <TextBox x:Name="RangeStartBox" Style="{StaticResource NumberBox}" Width="90"/>
+            <TextBlock Text="～" VerticalAlignment="Center" Margin="0,0,4,0"/>
+            <TextBox x:Name="RangeEndBox" Style="{StaticResource NumberBox}" Width="90"/>
+            <Button x:Name="RangeApplyButton" Content="表示"/>
+            <Button x:Name="RangeResetButton" Content="全体"/>
+            <TextBlock Foreground="#666" VerticalAlignment="Center" Margin="12,0,0,0"
+                       Text="ホイール: 拡大・縮小 / ドラッグ: 移動 / ダブルクリック: 全体"/>
+          </StackPanel>
+          <TextBlock DockPanel.Dock="Bottom" x:Name="HoverText" FontFamily="Consolas" Margin="60,4,0,0" Text=" "/>
+          <Grid DockPanel.Dock="Bottom" Margin="60,2,0,0">
+            <TextBlock x:Name="AxisStartText" HorizontalAlignment="Left" FontFamily="Consolas"/>
+            <TextBlock x:Name="AxisEndText" HorizontalAlignment="Right" FontFamily="Consolas"/>
+          </Grid>
+          <Grid>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="*"/>
+              <RowDefinition Height="12"/>
+              <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="60"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <Grid Grid.Row="0" Grid.Column="0">
+              <TextBlock x:Name="Chart40MaxText" VerticalAlignment="Top" HorizontalAlignment="Right" Margin="0,0,4,0" FontFamily="Consolas"/>
+              <TextBlock x:Name="Chart40MinText" VerticalAlignment="Bottom" HorizontalAlignment="Right" Margin="0,0,4,0" FontFamily="Consolas"/>
+            </Grid>
+            <Border Grid.Row="0" Grid.Column="1" BorderBrush="#B0B0B0" BorderThickness="1">
+              <Grid>
+                <Canvas x:Name="Chart40Canvas" ClipToBounds="True" Background="White" Cursor="Cross"/>
+                <TextBlock Text="ADD_40_0 レーザー出力 (%)" Foreground="{StaticResource Value40Brush}" FontWeight="SemiBold"
+                           Margin="6,2" IsHitTestVisible="False" HorizontalAlignment="Left" VerticalAlignment="Top"/>
+              </Grid>
+            </Border>
+
+            <Grid Grid.Row="2" Grid.Column="0">
+              <TextBlock x:Name="Chart21MaxText" VerticalAlignment="Top" HorizontalAlignment="Right" Margin="0,0,4,0" FontFamily="Consolas"/>
+              <TextBlock x:Name="Chart21MinText" VerticalAlignment="Bottom" HorizontalAlignment="Right" Margin="0,0,4,0" FontFamily="Consolas"/>
+            </Grid>
+            <Border Grid.Row="2" Grid.Column="1" BorderBrush="#B0B0B0" BorderThickness="1">
+              <Grid>
+                <Canvas x:Name="Chart21Canvas" ClipToBounds="True" Background="White" Cursor="Cross"/>
+                <TextBlock Text="ADD_21_0 ワイヤ速度 (mm/min)" Foreground="{StaticResource Value21Brush}" FontWeight="SemiBold"
+                           Margin="6,2" IsHitTestVisible="False" HorizontalAlignment="Left" VerticalAlignment="Top"/>
+              </Grid>
+            </Border>
+          </Grid>
+        </DockPanel>
+      </TabItem>
+
+      <!-- ④ ファイル情報 -->
+      <TabItem x:Name="InfoTab" Header="ファイル情報">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="4">
+          <StackPanel>
+            <TextBlock Style="{StaticResource Caption}" Text="ファイル" Margin="0,0,0,4"/>
+            <DataGrid x:Name="FileInfoGrid" HorizontalAlignment="Left" MinWidth="500">
+              <DataGrid.Columns>
+                <DataGridTextColumn Header="項目" Binding="{Binding Name}" Width="160"/>
+                <DataGridTextColumn Header="値" Binding="{Binding Value}" Width="Auto" MinWidth="320"/>
+              </DataGrid.Columns>
+            </DataGrid>
+
+            <TextBlock Style="{StaticResource Caption}" Text="統計 (有効レコードのみ。CSV 出力と同じ対象)"/>
+            <DataGrid x:Name="StatisticsGrid" HorizontalAlignment="Left" FontFamily="Consolas">
+              <DataGrid.Columns>
+                <DataGridTextColumn Header="パラメーター" Binding="{Binding Parameter}" Width="100"/>
+                <DataGridTextColumn Header="内容" Binding="{Binding Description}" Width="150"/>
+                <DataGridTextColumn Header="単位" Binding="{Binding Unit}" Width="70"/>
+                <DataGridTextColumn Header="件数" Binding="{Binding Count}" Width="80"/>
+                <DataGridTextColumn Header="最小" Binding="{Binding Minimum, StringFormat={}{0:F6}}" Width="120"/>
+                <DataGridTextColumn Header="最大" Binding="{Binding Maximum, StringFormat={}{0:F6}}" Width="120"/>
+                <DataGridTextColumn Header="平均" Binding="{Binding Average, StringFormat={}{0:F6}}" Width="120"/>
+                <DataGridTextColumn Header="標準偏差" Binding="{Binding StdDev, StringFormat={}{0:F6}}" Width="120"/>
+              </DataGrid.Columns>
+            </DataGrid>
+
+            <TextBlock Style="{StaticResource Caption}" Text="ヘッダー (4 byte ごとの解釈)"/>
+            <DataGrid x:Name="HeaderGrid" HorizontalAlignment="Left" FontFamily="Consolas">
+              <DataGrid.Columns>
+                <DataGridTextColumn Header="オフセット" Binding="{Binding Offset}" Width="90"/>
+                <DataGridTextColumn Header="Hex" Binding="{Binding Hex}" Width="100"/>
+                <DataGridTextColumn Header="Int32" Binding="{Binding Int32}" Width="120"/>
+                <DataGridTextColumn Header="Single" Binding="{Binding Single}" Width="160"/>
+              </DataGrid.Columns>
+            </DataGrid>
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+    </TabControl>
+  </DockPanel>
+</Window>

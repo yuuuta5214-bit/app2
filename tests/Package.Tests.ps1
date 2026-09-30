@@ -39,6 +39,17 @@ Describe '配布用 ZIP' {
         $names | Should -Contain "$prefix/$Name"
     }
 
+    It 'NCLogViewer.cmd の実行に必要なファイルがすべて入っている' -ForEach @(
+        @{ Name = 'NCLogViewer.cmd' }
+        @{ Name = 'tools/Start-NCLogViewer.ps1' }
+        @{ Name = 'NCLogTools/Public/Show-NCLogViewer.ps1' }
+        @{ Name = 'NCLogTools/Viewer/Start-NCLogViewerWindow.ps1' }
+        @{ Name = 'NCLogTools/Viewer/NCLogViewer.xaml' }
+        @{ Name = 'NCLogTools/Private/NCLogViewerRowList.ps1' }
+    ) {
+        $names | Should -Contain "$prefix/$Name"
+    }
+
     It 'テストやビルド用ファイルは含めない' {
         $names | Where-Object { $_ -match '/(tests|build|\.github)/' } | Should -BeNullOrEmpty
     }
@@ -49,8 +60,10 @@ Describe '配布用 ZIP' {
 
     It '<Name> は CRLF 改行' -ForEach @(
         @{ Name = 'NCLogExport.cmd' }
+        @{ Name = 'NCLogViewer.cmd' }
         @{ Name = 'Export-NCLogValues.ps1' }
         @{ Name = 'tools/Start-NCLogExport.ps1' }
+        @{ Name = 'NCLogTools/Viewer/NCLogViewer.xaml' }
     ) {
         $text = [System.Text.Encoding]::UTF8.GetString((Get-EntryBytes $Name))
         ([regex]::Matches($text, "(?<!`r)`n")).Count | Should -Be 0
