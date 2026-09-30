@@ -309,12 +309,15 @@ Describe 'Resolve-NCLogViewerOpenTarget' {
     }
 
     It '相対パスは絶対パスにする' {
+        # プロセスのカレントディレクトリは必ず戻す (Windows では使用中のフォルダを TestDrive の後始末で削除できない)
+        $savedCwd = [System.Environment]::CurrentDirectory
         Push-Location -LiteralPath $dirA.FullName
         try {
             [System.Environment]::CurrentDirectory = $dirA.FullName
             (Resolve-Test -Path @('NCLog_01.BIN')).Files | Should -Be @($logA1.FullName)
         }
         finally {
+            [System.Environment]::CurrentDirectory = $savedCwd
             Pop-Location
         }
     }
