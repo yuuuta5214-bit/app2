@@ -38,37 +38,24 @@
     }
 
     $length = $Bytes.Length
-    $dataLength = [Math]::Max(0, $length - $HeaderSize)
-    $recordCount = [int][Math]::Floor($dataLength / $RecordSize)
-    $trailing = $dataLength % $RecordSize
-
-    $v40 = [double[]]::new($recordCount)
-    $v21 = [double[]]::new($recordCount)
-    $plot40 = [double[]]::new($recordCount)
-    $plot21 = [double[]]::new($recordCount)
-    $valid = [bool[]]::new($recordCount)
-    $invalid = 0
-    $last40 = 0.0
-    $last21 = 0.0
     $divisor = $script:NCLogValue21Divisor
 
-    for ($i = 0; $i -lt $recordCount; $i++) {
-        $base = $HeaderSize + $i * $RecordSize
-        $a = [double][System.BitConverter]::ToUInt16($Bytes, $base + $Value40Offset)
-        $b = [System.BitConverter]::ToDouble($Bytes, $base + $Value21Offset) / $divisor
-        $v40[$i] = $a
-        $v21[$i] = $b
-        # レーザー出力 (整数) は常に有効。ワイヤ速度が NaN / ±Infinity なら無効レコード
-        if ([double]::IsFinite($b)) {
-            $valid[$i] = $true
-            $last40 = $a
-            $last21 = $b
-        }
-        else {
-            $invalid++
-        }
-        $plot40[$i] = $last40
-        $plot21[$i] = $last21
+    if (Test-NCLogNative) {
+        # 高速版 (C#)。結果は下の PowerShell 版と同じ
+        $decoded = [NCLogToolsNative.V1.RecordDecoder]::Decode($Bytes, $HeaderSize, $RecordSize, $Value40Offset, $Value21Offset, $divisor)
+        $recordCount = $decoded.RecordCount
+        $trailing = $decoded.TrailingBytes
+        $invalid = $decoded.InvalidCount
+        $v40 = $decoded.Value40
+        $v21 = $decoded.Value21
+        $plot40 = $decoded.Plot40
+        $plot21 = $decoded.Plot21
+        $valid = $decoded.Valid
+    }
+    else {
+        $recordCount, $trailing, $invalid, $v40, $v21, $plot40, $plot21, $valid = ConvertFrom-NCLogViewByte `
+            -Bytes $Bytes -HeaderSize $HeaderSize -RecordSize $RecordSize -Value40Offset $Value40Offset `
+            -Value21Offset $Value21Offset -Divisor $divisor
     }
 
     $s40 = Measure-NCLogViewValue -Value $v40 -Valid $valid
@@ -106,14 +93,77 @@
         RecordSize    = $RecordSize
         Value40Offset = $Value40Offset
         Value21Offset = $Value21Offset
-        RecordCount   = $recordCount
+        RecordCount   = [int]$recordCount
         TrailingBytes = [int]$trailing
-        InvalidCount  = $invalid
+        InvalidCount  = [int]$invalid
         Value40       = $v40
         Value21       = $v21
         Plot40        = $plot40
         Plot21        = $plot21
+        # 有効レコード (ワイヤ速度が有限) なら $true。CSV 出力・統計の対象
+        Valid         = $valid
         Statistics    = $statistics
         HeaderWords   = $headerWords
     }
+}
+
+function ConvertFrom-NCLogViewByte {
+    <#
+    .SYNOPSIS
+        New-NCLogViewData の PowerShell 版の解析処理 (C# 版が使えないとき用)。
+    .OUTPUTS
+        RecordCount, TrailingBytes, InvalidCount, Value40, Value21, Plot40, Plot21, Valid の順に 8 つの値
+    #>
+    [CmdletBinding()]
+    [OutputType([object[]])]
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$Bytes,
+        [Parameter(Mandatory)][int]$HeaderSize,
+        [Parameter(Mandatory)][int]$RecordSize,
+        [Parameter(Mandatory)][int]$Value40Offset,
+        [Parameter(Mandatory)][int]$Value21Offset,
+        [Parameter(Mandatory)][double]$Divisor
+    )
+
+    $dataLength = [Math]::Max(0, $Bytes.Length - $HeaderSize)
+    $recordCount = [int][Math]::Floor($dataLength / $RecordSize)
+    $trailing = $dataLength % $RecordSize
+
+    $v40 = [double[]]::new($recordCount)
+    $v21 = [double[]]::new($recordCount)
+    $plot40 = [double[]]::new($recordCount)
+    $plot21 = [double[]]::new($recordCount)
+    $valid = [bool[]]::new($recordCount)
+    $invalid = 0
+    $last40 = 0.0
+    $last21 = 0.0
+
+    for ($i = 0; $i -lt $recordCount; $i++) {
+        $base = $HeaderSize + $i * $RecordSize
+        $a = [double][System.BitConverter]::ToUInt16($Bytes, $base + $Value40Offset)
+        $b = [System.BitConverter]::ToDouble($Bytes, $base + $Value21Offset) / $Divisor
+        $v40[$i] = $a
+        $v21[$i] = $b
+        # レーザー出力 (整数) は常に有効。ワイヤ速度が NaN / ±Infinity なら無効レコード
+        if ([double]::IsFinite($b)) {
+            $valid[$i] = $true
+            $last40 = $a
+            $last21 = $b
+        }
+        else {
+            $invalid++
+        }
+        $plot40[$i] = $last40
+        $plot21[$i] = $last21
+    }
+
+    # 配列がパイプラインで展開されないよう、カンマ演算子で1要素ずつ返す
+    $recordCount
+    $trailing
+    $invalid
+    , $v40
+    , $v21
+    , $plot40
+    , $plot21
+    , $valid
 }

@@ -3,14 +3,26 @@
 
     WPF の DataGrid (ファイル一覧) に直接バインドする。プロパティ変更の通知は持たないため、
     値を変えたら画面側で一覧を Items.Refresh() する。
+
+    メモリ: 解析結果 (Data。バイト列と値の配列で 1 ファイル最大 約 60MB) は選択中のファイルだけが持つ。
+    ほかのファイルは件数などの要約 (RecordCount / InvalidCount / Layout) だけを持ち、
+    選択されたときに Import-NCLogViewerFileData でファイルを読み直す。
+    多数のファイルを開いてもメモリを使い切って PC が固まらないようにするため。
 #>
 
 class NCLogViewerFile {
     # BIN ファイルの絶対パス
     [string]$Path
     [string]$FileName
-    # New-NCLogViewData の結果 (バイト列を含む。レイアウト変更時はこれを解析し直す)
+    # New-NCLogViewData の結果 (バイト列を含む)。選択中のファイル以外は $null
     [object]$Data
+
+    # 解析結果の要約 (Data を解放しても残す)
+    [int]$RecordCount = 0
+    [int]$InvalidCount = 0
+    [datetime]$LastWriteTime = [datetime]::MinValue
+    # 解析に使ったレイアウト (HeaderSize / RecordSize / Value40Offset / Value21Offset)
+    [hashtable]$Layout
 
     # 出力ファイル名の入力値 (画面の入力欄の文字列そのまま)
     [string]$LaserText = ''
@@ -28,7 +40,27 @@ class NCLogViewerFile {
     NCLogViewerFile([string]$path, [object]$data) {
         $this.Path = $path
         $this.FileName = [System.IO.Path]::GetFileName($path)
+        $this.SetData($data)
+    }
+
+    # 解析結果を設定し、要約も更新する
+    [void] SetData([object]$data) {
         $this.Data = $data
+        $this.RecordCount = $data.RecordCount
+        $this.InvalidCount = $data.InvalidCount
+        $this.LastWriteTime = $data.LastWriteTime
+        $this.Layout = @{
+            HeaderSize    = [int]$data.HeaderSize
+            RecordSize    = [int]$data.RecordSize
+            Value40Offset = [int]$data.Value40Offset
+            Value21Offset = [int]$data.Value21Offset
+        }
+        if ($this.PickedRecord -ge $this.RecordCount) { $this.PickedRecord = -1 }
+    }
+
+    # 解析結果を解放する (要約は残す)
+    [void] ReleaseData() {
+        $this.Data = $null
     }
 }
 
@@ -47,6 +79,54 @@ function New-NCLogViewerFile {
     )
 
     [NCLogViewerFile]::new($Path, $Data)
+}
+
+function Read-NCLogViewerFileData {
+    <#
+    .SYNOPSIS
+        BIN ファイルを読み、指定のレイアウトで解析した結果 (New-NCLogViewData) を返す。
+    .PARAMETER Layout
+        HeaderSize / RecordSize / Value40Offset / Value21Offset を持つ hashtable。
+    #>
+    [CmdletBinding()]
+    [OutputType('NCLog.ViewData')]
+    param(
+        [Parameter(Mandatory)][string]$LiteralFilePath,
+        [Parameter(Mandatory)][hashtable]$Layout
+    )
+
+    $bytes = Read-NCLogViewFile -LiteralFilePath $LiteralFilePath
+    New-NCLogViewData -Bytes $bytes -Path $LiteralFilePath -LastWriteTime ([System.IO.File]::GetLastWriteTime($LiteralFilePath)) `
+        -HeaderSize $Layout.HeaderSize -RecordSize $Layout.RecordSize `
+        -Value40Offset $Layout.Value40Offset -Value21Offset $Layout.Value21Offset
+}
+
+function Import-NCLogViewerFileData {
+    <#
+    .SYNOPSIS
+        ファイル一覧の1ファイルの解析結果を用意する (なければファイルを読み直す)。
+    .DESCRIPTION
+        Data がなければ File.Layout (Layout 指定時はそれ) でファイルを読み直して解析する。
+        Layout を指定した場合は、Data があっても指定のレイアウトで解析し直す (バイト列は読み直さない)。
+    #>
+    [CmdletBinding()]
+    [OutputType('NCLog.ViewData')]
+    param(
+        [Parameter(Mandatory)][object]$File,
+        [hashtable]$Layout
+    )
+
+    if ($null -ne $File.Data -and -not $Layout) { return $File.Data }
+
+    $useLayout = if ($Layout) { $Layout } else { $File.Layout }
+    $data = if ($null -ne $File.Data) {
+        New-NCLogViewData -Bytes $File.Data.Bytes -Path $File.Path -LastWriteTime $File.Data.LastWriteTime @useLayout
+    }
+    else {
+        Read-NCLogViewerFileData -LiteralFilePath $File.Path -Layout $useLayout
+    }
+    $File.SetData($data)
+    $data
 }
 
 function Update-NCLogViewerFileState {
@@ -111,7 +191,7 @@ function Update-NCLogViewerFileState {
             continue
         }
 
-        if ($null -ne $f.Data -and ($f.Data.RecordCount - $f.Data.InvalidCount) -le 0) {
+        if (($f.RecordCount - $f.InvalidCount) -le 0) {
             $f.Status = '有効なレコードがありません'
             continue
         }

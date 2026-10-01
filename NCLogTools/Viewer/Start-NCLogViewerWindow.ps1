@@ -660,14 +660,18 @@ function Add-NCLogViewerFile {
 
     $Context.Window.Cursor = [System.Windows.Input.Cursors]::Wait
     try {
+        $number = 0
         foreach ($file in $target.Files) {
+            $number++
+            Show-NCLogViewerProgress -Context $Context -Text "読み込み中 $number / $($target.Files.Count): $([System.IO.Path]::GetFileName($file))"
             try {
-                $bytes = Read-NCLogViewFile -LiteralFilePath $file
-                $data = New-NCLogViewData -Bytes $bytes -Path $file -LastWriteTime ([System.IO.File]::GetLastWriteTime($file)) @layout
+                $data = Read-NCLogViewerFileData -LiteralFilePath $file -Layout $layout
                 $entry = New-NCLogViewerFile -Path $file -Data $data
+                # 解析結果 (最大 約 60MB) は最初に表示するファイルだけに残し、ほかは要約だけにする
+                if ($null -eq $first) { $first = $entry } else { $entry.ReleaseData() }
+                $data = $null
                 $Context.Suppress = $true
                 try { $Context.Files.Add($entry) } finally { $Context.Suppress = $false }
-                if ($null -eq $first) { $first = $entry }
             }
             catch {
                 $problems.Add("$([System.IO.Path]::GetFileName($file)): $(Get-NCLogViewerErrorMessage -ErrorRecord $_)")
@@ -749,6 +753,29 @@ function Select-NCLogViewerFile {
     )
 
     $ui = $Context.UI
+
+    # 解析結果は選択中のファイルだけが持つ (メモリを使い過ぎないため)。前のファイルの分を解放する
+    $previous = $Context.Current
+    if ($null -ne $previous -and -not [object]::ReferenceEquals($previous, $File)) {
+        $previous.ReleaseData()
+        $Context.Data = $null
+    }
+
+    # 選択したファイルの解析結果がなければ読み直す。読めなければ (削除・移動など) 表示を空にして知らせる
+    $loadError = $null
+    if ($null -ne $File -and $null -eq $File.Data) {
+        $Context.Window.Cursor = [System.Windows.Input.Cursors]::Wait
+        try {
+            [void](Import-NCLogViewerFileData -File $File)
+        }
+        catch {
+            $loadError = Get-NCLogViewerErrorMessage -ErrorRecord $_
+        }
+        finally {
+            $Context.Window.Cursor = $null
+        }
+    }
+
     $Context.Current = $File
     $Context.Suppress = $true
     try {
@@ -780,6 +807,27 @@ function Select-NCLogViewerFile {
     }
     Update-NCLogViewerPickedText -Context $Context
     Update-NCLogViewerFileList -Context $Context
+    if ($loadError) {
+        Show-NCLogViewerMessage -Context $Context -Icon Warning -Message "ファイルを読み込めません。`n`n$($File.Path)`n$loadError"
+    }
+}
+
+function Show-NCLogViewerProgress {
+    <#
+    .SYNOPSIS
+        処理中の状態をステータスバーに表示し、すぐに画面に反映する (長い処理の途中で呼ぶ)。
+    .DESCRIPTION
+        Render の優先度で Dispatcher を1回まわし、レイアウトと描画だけを行う。
+        入力 (クリック・キー操作) は処理しないため、処理中に別の操作が割り込むことはない。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable]$Context,
+        [Parameter(Mandatory)][string]$Text
+    )
+
+    $Context.UI.StatusText.Text = $Text
+    [void]$Context.Window.Dispatcher.Invoke([Action]{ }, [System.Windows.Threading.DispatcherPriority]::Render)
 }
 
 function Select-NCLogViewerNextFile {
@@ -878,7 +926,7 @@ function Update-NCLogViewerPickedText {
     )
 
     $current = $Context.Current
-    $Context.UI.PickedText.Text = if ($null -ne $current -and $current.PickedRecord -ge 0 -and
+    $Context.UI.PickedText.Text = if ($null -ne $current -and $null -ne $current.Data -and $current.PickedRecord -ge 0 -and
         $current.PickedRecord -lt $current.Data.RecordCount) {
         [string]::Format([System.Globalization.CultureInfo]::InvariantCulture,
             'グラフの No.{0} から取得しました (ADD_40_0 = {1:0.######} W / ADD_21_0 = {2:0.######} mm/min)。緑の線が取得位置です。',
@@ -903,7 +951,7 @@ function Set-NCLogViewerPickedRecord {
     )
 
     $current = $Context.Current
-    if ($null -eq $current) { return }
+    if ($null -eq $current -or $null -eq $current.Data) { return }
     $data = $current.Data
     $v40 = $data.Value40[$Index]
     $v21 = $data.Value21[$Index]
@@ -938,7 +986,10 @@ function Set-NCLogViewerPickedRecord {
 function Update-NCLogViewerLayout {
     <#
     .SYNOPSIS
-        開いているすべてのファイルを、入力欄のレイアウトで解析し直す (ファイルは読み直さない)。
+        開いているすべてのファイルを、入力欄のレイアウトで解析し直す。
+    .DESCRIPTION
+        選択中のファイルはメモリ上のバイト列を解析し直す。ほかのファイルは読み直して要約 (件数) だけを更新し、
+        解析結果は解放する (メモリを使い過ぎないため)。
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
         Justification = '画面表示を更新するだけ')]
@@ -949,17 +1000,32 @@ function Update-NCLogViewerLayout {
 
     if ($Context.Files.Count -eq 0) { return }
     $layout = Get-NCLogViewerLayout -Context $Context
+    $problems = [System.Collections.Generic.List[string]]::new()
+    $files = @($Context.Files)
     $Context.Window.Cursor = [System.Windows.Input.Cursors]::Wait
     try {
-        foreach ($f in $Context.Files) {
-            $f.Data = New-NCLogViewData -Bytes $f.Data.Bytes -Path $f.Path -LastWriteTime $f.Data.LastWriteTime @layout
-            if ($f.PickedRecord -ge $f.Data.RecordCount) { $f.PickedRecord = -1 }
+        for ($i = 0; $i -lt $files.Count; $i++) {
+            $f = $files[$i]
+            Show-NCLogViewerProgress -Context $Context -Text "再解析中 $($i + 1) / $($files.Count): $($f.FileName)"
+            try {
+                [void](Import-NCLogViewerFileData -File $f -Layout $layout)
+            }
+            catch {
+                # 読めなくなったファイルも、次に使うレイアウトは揃えておく
+                $f.Layout = $layout.Clone()
+                $problems.Add("$($f.FileName): $(Get-NCLogViewerErrorMessage -ErrorRecord $_)")
+            }
+            if (-not [object]::ReferenceEquals($f, $Context.Current)) { $f.ReleaseData() }
         }
     }
     finally {
         $Context.Window.Cursor = $null
     }
     Select-NCLogViewerFile -Context $Context -File $Context.Current
+    if ($problems.Count -gt 0) {
+        Show-NCLogViewerMessage -Context $Context -Icon Warning -Message (
+            "読み込めなかったファイルがあります。`n`n" + (@($problems | Select-Object -First 15) -join "`n"))
+    }
 }
 
 function Set-NCLogViewerData {
@@ -1139,12 +1205,20 @@ function Update-NCLogViewerChart {
     $ui = $Context.UI
     $data = $Context.Data
     $picked = if ($null -ne $Context.Current -and $null -ne $data) { $Context.Current.PickedRecord } else { -1 }
+    # 配列は $( if ... ) で受け渡さないこと。パイプラインで1要素ずつ展開されて object[] に作り直され、
+    # 100 万レコードでは描き直し (ドラッグ中はマウスが動くたび) ごとに数秒かかって画面が固まる
+    $plot40 = $null
+    $plot21 = $null
+    if ($null -ne $data) {
+        $plot40 = $data.Plot40
+        $plot21 = $data.Plot21
+    }
     $charts = @(
         @{ Canvas = $ui.Chart40Canvas; Max = $ui.Chart40MaxText; Min = $ui.Chart40MinText; Brush = 'Value40Brush'; CursorKey = 'Cursor40'
-            Values = $(if ($data) { $data.Plot40 } else { $null })
+            Values = $plot40
         }
         @{ Canvas = $ui.Chart21Canvas; Max = $ui.Chart21MaxText; Min = $ui.Chart21MinText; Brush = 'Value21Brush'; CursorKey = 'Cursor21'
-            Values = $(if ($data) { $data.Plot21 } else { $null })
+            Values = $plot21
         }
     )
 
@@ -1292,7 +1366,7 @@ function Select-NCLogViewerOutputDirectory {
 function Export-NCLogViewerCsv {
     <#
     .SYNOPSIS
-        選択中のファイルを、表示中のレイアウトで CSV に出力する (Export-NCLogValue を使用)。
+        選択中のファイルを、表示中のレイアウトで CSV に出力する (内容は Export-NCLogValue と同じ。Write-NCLogViewCsv を使用)。
         ファイル名の初期値は出力ファイル名 (入力済みの場合)。
     #>
     [CmdletBinding()]
@@ -1328,20 +1402,14 @@ function Export-NCLogViewerCsv {
     # 解析結果と CSV が一致するよう、表示中のレイアウトを使う (入力欄を編集中でも再解析前の値)
     $Context.Window.Cursor = [System.Windows.Input.Cursors]::Wait
     try {
-        $exportParams = @{
-            LiteralPath   = $data.Path
-            Format        = 'CSV'
-            OutputPath    = $dialog.FileName
-            Force         = $true
+        $layout = @{
             HeaderSize    = $data.HeaderSize
             RecordSize    = $data.RecordSize
             Value40Offset = $data.Value40Offset
             Value21Offset = $data.Value21Offset
-            ErrorAction   = 'Stop'
-            WarningAction = 'SilentlyContinue'
         }
-        # Export-NCLogValue は完了メッセージを Write-Host で出すため、情報ストリームごと捨てる
-        Export-NCLogValue @exportParams 6>$null
+        # 上書きはダイアログで確認済み
+        $valid = Write-NCLogViewCsv -SourcePath $data.Path -OutputPath $dialog.FileName -Layout $layout -Force
     }
     finally {
         $Context.Window.Cursor = $null
@@ -1425,17 +1493,21 @@ function Export-NCLogViewerBatchCsv {
         [pscustomobject]@{
             SourcePath    = $f.Path
             OutputPath    = $f.OutputPath
-            HeaderSize    = $f.Data.HeaderSize
-            RecordSize    = $f.Data.RecordSize
-            Value40Offset = $f.Data.Value40Offset
-            Value21Offset = $f.Data.Value21Offset
-            ValidCount    = $f.Data.RecordCount - $f.Data.InvalidCount
+            HeaderSize    = $f.Layout.HeaderSize
+            RecordSize    = $f.Layout.RecordSize
+            Value40Offset = $f.Layout.Value40Offset
+            Value21Offset = $f.Layout.Value21Offset
+            ValidCount    = $f.RecordCount - $f.InvalidCount
         }
     }
 
     $Context.Window.Cursor = [System.Windows.Input.Cursors]::Wait
     try {
-        $results = @(Invoke-NCLogBatchCsvExport -Item @($items) -ExistingAction $existingAction -Confirm:$false)
+        $progress = {
+            param($number, $count, $item)
+            Show-NCLogViewerProgress -Context $Context -Text "CSV 出力中 $number / $count : $([System.IO.Path]::GetFileName($item.OutputPath))"
+        }
+        $results = @(Invoke-NCLogBatchCsvExport -Item @($items) -ExistingAction $existingAction -OnProgress $progress -Confirm:$false)
     }
     finally {
         $Context.Window.Cursor = $null

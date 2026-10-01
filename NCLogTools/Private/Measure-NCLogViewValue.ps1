@@ -19,6 +19,18 @@
     }
     $useMask = $PSBoundParameters.ContainsKey('Valid')
 
+    if (Test-NCLogNative) {
+        # 高速版 (C#)。結果は下の PowerShell 版と同じ
+        # 配列は $( if ... ) や if 式で渡さないこと (パイプラインで1要素ずつ展開され、100 万件で約 1 秒かかる)
+        $mask = $null
+        if ($useMask) { $mask = $Valid }
+        $s = [NCLogToolsNative.V1.RecordDecoder]::Measure($Value, $mask)
+        if ($s.Count -eq 0) {
+            return [pscustomobject]@{ Count = 0L; Minimum = $null; Maximum = $null; Average = $null; StdDev = $null }
+        }
+        return [pscustomobject]@{ Count = $s.Count; Minimum = $s.Minimum; Maximum = $s.Maximum; Average = $s.Average; StdDev = $s.StdDev }
+    }
+
     $n = 0L
     $mean = 0.0
     $m2 = 0.0
