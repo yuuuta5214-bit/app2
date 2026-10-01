@@ -81,6 +81,25 @@ Describe 'Show-NCLogViewer' {
             $leftUp | Should -Not -Match 'Set-NCLogViewerPickedRecord'
         }
 
+        It 'ドロップのイベント中には読み込まない (ドロップ元のエクスプローラーごと固まるため)' {
+            $drop = [regex]::Match($viewerCode, '(?s)\$window\.Add_Drop\(\{(.*?)\n        \}\)').Groups[1].Value
+            $drop | Should -Not -BeNullOrEmpty
+            $drop | Should -Match 'Request-NCLogViewerOpen'
+            $drop | Should -Not -Match 'Add-NCLogViewerFile'
+            $drop | Should -Not -Match 'Show-NCLogViewerProgress'
+            # 予約した読み込みは Dispatcher の次の処理で行う
+            $request = [regex]::Match($viewerCode, '(?s)function Request-NCLogViewerOpen \{(.*?)\n\}').Groups[1].Value
+            $request | Should -Match 'BeginInvoke\(\[System\.Windows\.Threading\.DispatcherPriority\]::Background'
+            $request | Should -Match 'Add-NCLogViewerFile'
+        }
+
+        It '起動時に指定されたファイルも、準備 (C# のコンパイル) の後に予約して開く' {
+            $rendered = [regex]::Match($viewerCode, '(?s)\$window\.Add_ContentRendered\(\{(.*?)\n        \}\)').Groups[1].Value
+            $rendered | Should -Match 'Test-NCLogNative'
+            $rendered | Should -Match 'Request-NCLogViewerOpen'
+            $rendered | Should -Not -Match 'Add-NCLogViewerFile'
+        }
+
         It 'レーザー出力の単位は W で表示する' {
             $xamlText | Should -Match 'ADD_40_0 レーザー出力 \(W\)'
             $xamlText | Should -Not -Match 'レーザー出力 \(%\)'

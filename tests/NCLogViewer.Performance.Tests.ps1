@@ -302,3 +302,32 @@ Describe 'CSV 出力の高速版 (Write-NCLogViewCsv)' {
         $calls | Should -Be @('1/2 a.csv', '2/2 b.csv')
     }
 }
+
+Describe '診断ログ (Write-NCLogViewerTrace)' {
+    BeforeAll {
+        $script:tracePath = InModuleScope NCLogTools { Get-NCLogViewerTracePath }
+        $script:saved = if (Test-Path -LiteralPath $tracePath) { [System.IO.File]::ReadAllBytes($tracePath) } else { $null }
+    }
+
+    AfterAll {
+        if ($null -ne $saved) { [System.IO.File]::WriteAllBytes($tracePath, $saved) }
+        else { Remove-Item -LiteralPath $tracePath -Force -ErrorAction SilentlyContinue }
+    }
+
+    It '一時フォルダの NCLogViewer.log に時刻付きで書き、Reset で作り直す' {
+        $tracePath | Should -Be (Join-Path ([System.IO.Path]::GetTempPath()) 'NCLogViewer.log')
+        InModuleScope NCLogTools {
+            Write-NCLogViewerTrace -Reset '起動テスト'
+            Write-NCLogViewerTrace '読み込み完了: 3 レコード'
+        }
+        $lines = @(Get-Content -LiteralPath $tracePath -Encoding utf8)
+        $lines.Count | Should -Be 2
+        $lines[0] | Should -Match '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}  起動テスト$'
+        $lines[1] | Should -Match '読み込み完了: 3 レコード$'
+    }
+
+    It '書けなくても例外にしない (画面の処理を止めない)' {
+        Mock -ModuleName NCLogTools Get-NCLogViewerTracePath { Join-Path $TestDrive 'nofolder' 'x.log' }
+        { InModuleScope NCLogTools { Write-NCLogViewerTrace 'x' } } | Should -Not -Throw
+    }
+}

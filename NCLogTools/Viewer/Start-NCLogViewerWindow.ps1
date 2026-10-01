@@ -49,7 +49,7 @@ function Start-NCLogViewerWindow {
     $ui = @{}
     foreach ($name in @(
             'MenuOpen', 'MenuRemove', 'MenuRemoveAll', 'MenuBatchExport', 'MenuExport', 'MenuExit',
-            'MenuShowHex', 'MenuShowInfo', 'MenuShowLayout', 'MenuHowTo', 'MenuAbout',
+            'MenuShowHex', 'MenuShowInfo', 'MenuShowLayout', 'MenuHowTo', 'MenuOpenLog', 'MenuAbout',
             'OpenButton', 'ToolbarBatchExportButton', 'LayoutBar',
             'HeaderSizeBox', 'RecordSizeBox', 'Value40OffsetBox', 'Value21OffsetBox', 'ApplyLayoutButton', 'ResetLayoutButton',
             'StatusText', 'SelectionText',
@@ -80,6 +80,9 @@ function Start-NCLogViewerWindow {
         Drag          = $null
         Suppress      = $false
         PendingOffset = 0L
+        # 開く予定のファイル (Request-NCLogViewerOpen が溜め、Dispatcher の次の処理で開く)
+        PendingOpen   = $null
+        StartupFiles  = @()
         DefaultLayout = @{
             HeaderSize    = $HeaderSize
             RecordSize    = $RecordSize
@@ -115,6 +118,16 @@ function Start-NCLogViewerWindow {
     $ui.ApplyLayoutButton.Add_Click($applyHandler)
     $ui.MenuHowTo.Add_Click($howToHandler)
     $ui.MenuExit.Add_Click({ $ctx.Window.Close() })
+    $ui.MenuOpenLog.Add_Click({
+            Invoke-NCLogViewerAction -Context $ctx -Action {
+                $log = Get-NCLogViewerTracePath
+                if (-not [System.IO.File]::Exists($log)) {
+                    Show-NCLogViewerMessage -Context $ctx -Message "診断ログはまだありません。`n$log"
+                    return
+                }
+                Invoke-Item -LiteralPath $log
+            }
+        })
     $ui.MenuAbout.Add_Click({
             Invoke-NCLogViewerAction -Context $ctx -Action {
                 $module = Get-Module -Name NCLogTools
@@ -197,11 +210,13 @@ function Start-NCLogViewerWindow {
             }
             $e.Handled = $true
         })
+    # ドロップ処理の中では読み込まない。ドロップ元 (エクスプローラー) はこの処理が終わるまで待つため、
+    # ここで時間のかかる処理をするとエクスプローラーごと固まる。ファイル名だけ受け取って、読み込みは後で行う
     $window.Add_Drop({
             param($s, $e)
             Invoke-NCLogViewerAction -Context $ctx -Action {
                 $dropped = @($e.Data.GetData([System.Windows.DataFormats]::FileDrop))
-                if ($dropped.Count -gt 0) { Add-NCLogViewerFile -Context $ctx -Path ([string[]]$dropped) }
+                if ($dropped.Count -gt 0) { Request-NCLogViewerOpen -Context $ctx -Path ([string[]]$dropped) }
             }
         })
 
@@ -436,10 +451,24 @@ function Start-NCLogViewerWindow {
             Invoke-NCLogViewerAction -Context $ctx -Action {
                 [void]$ctx.Window.Activate()
                 Update-NCLogViewerFileList -Context $ctx
-                $targets = @($LiteralFilePath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-                if ($targets.Count -gt 0) { Add-NCLogViewerFile -Context $ctx -Path $targets }
+                # 高速版 (C#) のコンパイルは初回に 1～数秒かかるため、ファイルを開く前に済ませておく。
+                # 表示を先に反映させるため、Dispatcher の次の処理 (Background) で行う
+                $ctx.UI.StatusText.Text = '起動の準備中...'
+                $ctx.StartupFiles = @($LiteralFilePath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+                [void]$ctx.Window.Dispatcher.BeginInvoke([System.Windows.Threading.DispatcherPriority]::Background, [Action]{
+                        Invoke-NCLogViewerAction -Context $ctx -Action {
+                            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+                            $native = Test-NCLogNative
+                            Write-NCLogViewerTrace "準備完了: 高速版 (C#)=$native ($($sw.ElapsedMilliseconds) ms)"
+                            $ctx.UI.StatusText.Text = 'ファイルを開くか、ウィンドウにドラッグ＆ドロップしてください。'
+                            if ($ctx.StartupFiles.Count -gt 0) { Request-NCLogViewerOpen -Context $ctx -Path ([string[]]$ctx.StartupFiles) }
+                        }
+                    })
             }
         })
+
+    Write-NCLogViewerTrace -Reset ("起動: NCLogTools $((Get-Module -Name NCLogTools).Version) / PowerShell $($PSVersionTable.PSVersion) / " +
+        "$([System.Runtime.InteropServices.RuntimeInformation]::OSDescription)")
 
     [void]$window.ShowDialog()
 }
@@ -478,7 +507,81 @@ function Invoke-NCLogViewerAction {
     }
     catch {
         Write-Verbose ($_ | Out-String)
+        Write-NCLogViewerTrace "エラー: $(Get-NCLogViewerErrorMessage -ErrorRecord $_) ($($_.InvocationInfo.PositionMessage -replace '\s+', ' '))"
         Show-NCLogViewerMessage -Context $Context -Icon Warning -Message (Get-NCLogViewerErrorMessage -ErrorRecord $_)
+    }
+}
+
+function Request-NCLogViewerOpen {
+    <#
+    .SYNOPSIS
+        ファイルを開く予約をし、Dispatcher の次の処理 (Background) で開く。
+    .DESCRIPTION
+        ドラッグ＆ドロップのイベント中に読み込むと、ドロップ元 (エクスプローラー) が終わるまで待たされて固まる。
+        イベントはすぐに終え、読み込みは通常の処理として後で行う。続けて予約された分はまとめて開く。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable]$Context,
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Path
+    )
+
+    $first = $null -eq $Context.PendingOpen
+    $Context.PendingOpen = [string[]]@(@($Context.PendingOpen) + @($Path) | Where-Object { $_ })
+    Write-NCLogViewerTrace "開く予約: $($Path.Count) 件"
+    if (-not $first) { return }
+    # 後で実行される処理からはこの関数の変数が見えないため、モジュールの変数で受け渡す
+    $script:NCLogViewerOpenContext = $Context
+    [void]$Context.Window.Dispatcher.BeginInvoke([System.Windows.Threading.DispatcherPriority]::Background, [Action]{
+            $c = $script:NCLogViewerOpenContext
+            Invoke-NCLogViewerAction -Context $c -Action {
+                $paths = $c.PendingOpen
+                $c.PendingOpen = $null
+                if ($paths.Count -gt 0) { Add-NCLogViewerFile -Context $c -Path $paths }
+            }
+        })
+}
+
+function Get-NCLogViewerTracePath {
+    <#
+    .SYNOPSIS
+        診断ログのパス (一時フォルダの NCLogViewer.log) を返す。
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+
+    Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath 'NCLogViewer.log'
+}
+
+function Write-NCLogViewerTrace {
+    <#
+    .SYNOPSIS
+        診断ログに1行書く (時刻付き)。書けなくても画面の処理は続ける。
+    .DESCRIPTION
+        動作が止まったときに、どの処理で止まったかを調べるためのログ。ファイル名・件数・所要時間だけを書き、
+        ファイルの中身は書かない。Reset 指定時 (起動時) はログを作り直す。
+    #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = '一時フォルダの診断ログに追記するだけ')]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory, Position = 0)][string]$Message,
+        [switch]$Reset
+    )
+
+    try {
+        $line = '{0:yyyy-MM-dd HH:mm:ss.fff}  {1}{2}' -f [datetime]::Now, $Message, [System.Environment]::NewLine
+        $path = Get-NCLogViewerTracePath
+        if ($Reset) {
+            [System.IO.File]::WriteAllText($path, $line, [System.Text.UTF8Encoding]::new($true))
+        }
+        else {
+            [System.IO.File]::AppendAllText($path, $line, [System.Text.UTF8Encoding]::new($true))
+        }
+    }
+    catch {
+        Write-Verbose "診断ログを書けません: $($_.Exception.Message)"
     }
 }
 
@@ -665,7 +768,10 @@ function Add-NCLogViewerFile {
             $number++
             Show-NCLogViewerProgress -Context $Context -Text "読み込み中 $number / $($target.Files.Count): $([System.IO.Path]::GetFileName($file))"
             try {
+                $sw = [System.Diagnostics.Stopwatch]::StartNew()
+                Write-NCLogViewerTrace "読み込み開始: $file ($(([System.IO.FileInfo]::new($file)).Length) byte)"
                 $data = Read-NCLogViewerFileData -LiteralFilePath $file -Layout $layout
+                Write-NCLogViewerTrace "読み込み完了: $($data.RecordCount) レコード (無効 $($data.InvalidCount)) $($sw.ElapsedMilliseconds) ms"
                 $entry = New-NCLogViewerFile -Path $file -Data $data
                 # 解析結果 (最大 約 60MB) は最初に表示するファイルだけに残し、ほかは要約だけにする
                 if ($null -eq $first) { $first = $entry } else { $entry.ReleaseData() }
@@ -675,6 +781,7 @@ function Add-NCLogViewerFile {
             }
             catch {
                 $problems.Add("$([System.IO.Path]::GetFileName($file)): $(Get-NCLogViewerErrorMessage -ErrorRecord $_)")
+                Write-NCLogViewerTrace "読み込み失敗: $file $(Get-NCLogViewerErrorMessage -ErrorRecord $_)"
             }
         }
     }
@@ -766,6 +873,7 @@ function Select-NCLogViewerFile {
     if ($null -ne $File -and $null -eq $File.Data) {
         $Context.Window.Cursor = [System.Windows.Input.Cursors]::Wait
         try {
+            Write-NCLogViewerTrace "読み直し: $($File.Path)"
             [void](Import-NCLogViewerFileData -File $File)
         }
         catch {
@@ -777,6 +885,7 @@ function Select-NCLogViewerFile {
     }
 
     $Context.Current = $File
+    $selectWatch = [System.Diagnostics.Stopwatch]::StartNew()
     $Context.Suppress = $true
     try {
         if ($null -eq $File) {
@@ -807,6 +916,7 @@ function Select-NCLogViewerFile {
     }
     Update-NCLogViewerPickedText -Context $Context
     Update-NCLogViewerFileList -Context $Context
+    Write-NCLogViewerTrace "表示完了: $(if ($File) { $File.FileName } else { '(なし)' }) $($selectWatch.ElapsedMilliseconds) ms"
     if ($loadError) {
         Show-NCLogViewerMessage -Context $Context -Icon Warning -Message "ファイルを読み込めません。`n`n$($File.Path)`n$loadError"
     }
@@ -1204,6 +1314,7 @@ function Update-NCLogViewerChart {
 
     $ui = $Context.UI
     $data = $Context.Data
+    $chartWatch = [System.Diagnostics.Stopwatch]::StartNew()
     $picked = if ($null -ne $Context.Current -and $null -ne $data) { $Context.Current.PickedRecord } else { -1 }
     # 配列は $( if ... ) で受け渡さないこと。パイプラインで1要素ずつ展開されて object[] に作り直され、
     # 100 万レコードでは描き直し (ドラッグ中はマウスが動くたび) ごとに数秒かかって画面が固まる
@@ -1288,6 +1399,10 @@ function Update-NCLogViewerChart {
     else {
         $ui.AxisStartText.Text = ''
         $ui.AxisEndText.Text = ''
+    }
+    # 描き直しは頻繁なので、時間がかかったときだけ記録する
+    if ($chartWatch.ElapsedMilliseconds -ge 200) {
+        Write-NCLogViewerTrace "グラフ描画: No.$($Context.ViewStart)～$($Context.ViewEnd) $($chartWatch.ElapsedMilliseconds) ms"
     }
 }
 

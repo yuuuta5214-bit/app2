@@ -103,6 +103,8 @@
       </MenuItem>
       <MenuItem Header="ヘルプ(_H)">
         <MenuItem x:Name="MenuHowTo" Header="使い方(_U)" InputGestureText="F1"/>
+        <MenuItem x:Name="MenuOpenLog" Header="診断ログを開く(_L)" ToolTip="動作が止まったときなどの調査用。処理の段階と所要時間を記録しています"/>
+        <Separator/>
         <MenuItem x:Name="MenuAbout" Header="バージョン情報(_A)"/>
       </MenuItem>
     </Menu>
