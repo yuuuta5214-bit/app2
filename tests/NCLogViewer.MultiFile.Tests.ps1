@@ -12,7 +12,7 @@ BeforeAll {
     $script:logA2 = New-NCLogTestFile -Path (Join-Path $dirA 'NCLog_02.bin') -Records @(@{ V40 = 1500; V21 = 800 })
     $null = Set-Content -LiteralPath (Join-Path $dirA 'readme.txt') -Value 'x'
     $script:logB1 = New-NCLogTestFile -Path (Join-Path $dirB 'NCLog_03.BIN') -Records @(@{ V40 = 1; V21 = 2 })
-    $script:invalidLog = New-NCLogTestFile -Path (Join-Path $dirB 'NCLog_nan.BIN') -Records @(@{ V40 = [single]::NaN; V21 = 1 })
+    $script:invalidLog = New-NCLogTestFile -Path (Join-Path $dirB 'NCLog_nan.BIN') -Records @(@{ V40 = 1; V21 = [double]::NaN })
 
     function New-TestViewerFile {
         param([string]$Path, [string]$Laser = '', [string]$Wire = '', [string]$Ratio = '')

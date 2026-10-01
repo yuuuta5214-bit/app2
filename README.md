@@ -4,8 +4,8 @@
 
 | 列 | パラメーター | 内容 | 単位 |
 |---|---|---|---|
-| `Value40` | ADD_40_0 (`amPrcLg_output_pwr`) | 実レーザー出力パワー | W |
-| `Value21` | ADD_21_0 (`realWirFeed_vel`) | 実ワイヤフィード速度 | mm/min |
+| `Value40` | ADD_40_0 (`amPrcLg_output_pwr`) | 実レーザー出力パワー (UInt16) | W |
+| `Value21` | ADD_21_0 (`realWirFeed_vel`) | 実ワイヤフィード速度 (Double ÷ 1000) | mm/min |
 
 ## 必要環境
 
@@ -98,12 +98,16 @@ v1.0 からの呼び出し (`.\Export-NCLogValues.ps1 -FilePath ...`) はその�
 
 詳しくは `Get-Help <コマンド名> -Full` を参照してください。
 
-## バイナリレイアウト (既定値・要実機確認)
+## バイナリレイアウト
 
 ```
 [Header 0x20 byte][Record 16 byte][Record 16 byte]...
-Record: +4 = ADD_40_0 (float32 LE), +8 = ADD_21_0 (float32 LE)
+Record: +4 = ADD_40_0 (UInt16 LE, 2 byte)  値はそのまま W
+        +8 = ADD_21_0 (Double LE, 8 byte)  1000 で割った値が mm/min
 ```
+
+- ADD_21_0 が NaN / ±Infinity のレコードは無効レコードとして除外します (CSV・統計の対象外)。
+- 値の形式は `NCLogTools/Private/NCLogRecordFormat.ps1` で定義しています。
 
 異なる場合は `-HeaderSize` / `-RecordSize` / `-Value40Offset` / `-Value21Offset` で指定できます。
 

@@ -131,9 +131,9 @@
         <TextBlock Text="レコード" VerticalAlignment="Center"/>
         <TextBox x:Name="RecordSizeBox" Style="{StaticResource NumberBox}" ToolTip="1レコードのバイト数"/>
         <TextBlock Text="ADD_40_0 位置" VerticalAlignment="Center"/>
-        <TextBox x:Name="Value40OffsetBox" Style="{StaticResource NumberBox}" ToolTip="レコード先頭から ADD_40_0 (float32) までのバイト数"/>
+        <TextBox x:Name="Value40OffsetBox" Style="{StaticResource NumberBox}" ToolTip="レコード先頭から ADD_40_0 (UInt16 2 byte) までのバイト数"/>
         <TextBlock Text="ADD_21_0 位置" VerticalAlignment="Center"/>
-        <TextBox x:Name="Value21OffsetBox" Style="{StaticResource NumberBox}" ToolTip="レコード先頭から ADD_21_0 (float32) までのバイト数"/>
+        <TextBox x:Name="Value21OffsetBox" Style="{StaticResource NumberBox}" ToolTip="レコード先頭から ADD_21_0 (Double 8 byte。1000 で割って mm/min) までのバイト数"/>
         <Button x:Name="ApplyLayoutButton" Content="再解析" IsEnabled="False" ToolTip="入力したレイアウトで、開いているすべてのファイルを読み直します (Enter キーでも実行)"/>
         <Button x:Name="ResetLayoutButton" Content="既定値" ToolTip="起動時のレイアウトに戻します"/>
       </WrapPanel>

@@ -18,15 +18,11 @@
                     -ErrorId 'BigEndianNotSupported' -Category NotImplemented -TargetObject $null))
     }
 
-    foreach ($entry in @(
-            @{ Name = 'Value40Offset'; Value = $Value40Offset }
-            @{ Name = 'Value21Offset'; Value = $Value21Offset }
-        )) {
-        if ($entry.Value + 4 -gt $RecordSize) {
-            $Cmdlet.ThrowTerminatingError((New-NCLogErrorRecord `
-                        -Exception ([System.ArgumentOutOfRangeException]::new($entry.Name,
-                            "$($entry.Name) ($($entry.Value)) + 4 byte がレコードサイズ $RecordSize を超えています。")) `
-                        -ErrorId 'InvalidRecordLayout' -Category InvalidArgument -TargetObject $entry.Value))
-        }
+    # ADD_40_0 (UInt16 2 byte) / ADD_21_0 (Double 8 byte) がレコード内に重ならずに収まること
+    $problem = Get-NCLogLayoutProblem -RecordSize $RecordSize -Value40Offset $Value40Offset -Value21Offset $Value21Offset
+    if ($null -ne $problem) {
+        $Cmdlet.ThrowTerminatingError((New-NCLogErrorRecord `
+                    -Exception ([System.ArgumentOutOfRangeException]::new($problem.Name, $problem.Message)) `
+                    -ErrorId 'InvalidRecordLayout' -Category InvalidArgument -TargetObject $problem.Name))
     }
 }

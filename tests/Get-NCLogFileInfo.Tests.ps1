@@ -5,7 +5,7 @@ BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '..' 'NCLogTools' 'NCLogTools.psd1') -Force
 
     $script:log = New-NCLogTestFile -Path (Join-Path $TestDrive 'NCLog_info.BIN') -TrailingBytes 3 -Records @(
-        @{ V40 = 10.5; V21 = 1000 }
+        @{ V40 = 10; V21 = 1000 }
         @{ V40 = 20; V21 = 2000 }
         @{ V40 = 30; V21 = 3000 }
     )
@@ -38,8 +38,10 @@ Describe 'Get-NCLogFileInfo' {
         $s1.FileOffset | Should -Be (0x20 + 16)
         $s1.Words.Count | Should -Be 4
         $s1.Words[0].Int32 | Should -Be 1                # レコード番号
-        $s1.Words[1].Single | Should -Be 20               # ADD_40_0
-        $s1.Words[2].Single | Should -Be 2000             # ADD_21_0
+        $s1.Words[1].Int32 | Should -Be 20                # ADD_40_0 (UInt16。上位 2 byte は 0)
+        # ADD_21_0 は +8～+15 の Double (mm/min × 1000)。4 byte のワード2つにまたがる
+        $double = [System.BitConverter]::ToDouble([System.Convert]::FromHexString($s1.Words[2].Hex + $s1.Words[3].Hex), 0)
+        $double | Should -Be 2000000
         $s1.Hex.Length | Should -Be 32
     }
 

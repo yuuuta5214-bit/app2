@@ -907,7 +907,7 @@ function Set-NCLogViewerPickedRecord {
     $data = $current.Data
     $v40 = $data.Value40[$Index]
     $v21 = $data.Value21[$Index]
-    if (-not ([float]::IsFinite($v40) -and [float]::IsFinite($v21))) {
+    if (-not ([double]::IsFinite($v40) -and [double]::IsFinite($v21))) {
         throw [System.InvalidOperationException]::new(
             "No.$Index は無効レコード (NaN / Infinity) のため値を取得できません。別の位置を右クリックしてください。")
     }
@@ -1013,8 +1013,8 @@ function Set-NCLogViewerData {
         [pscustomobject]@{ Name = '更新日時'; Value = $Data.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss') }
         [pscustomobject]@{ Name = 'ヘッダーサイズ'; Value = [string]::Format($ic, '{0} byte (0x{0:X})', $Data.HeaderSize) }
         [pscustomobject]@{ Name = 'レコードサイズ'; Value = [string]::Format($ic, '{0} byte', $Data.RecordSize) }
-        [pscustomobject]@{ Name = 'ADD_40_0 の位置'; Value = [string]::Format($ic, '+{0} (float32)', $Data.Value40Offset) }
-        [pscustomobject]@{ Name = 'ADD_21_0 の位置'; Value = [string]::Format($ic, '+{0} (float32)', $Data.Value21Offset) }
+        [pscustomobject]@{ Name = 'ADD_40_0 の位置'; Value = [string]::Format($ic, '+{0} (UInt16, 2 byte)', $Data.Value40Offset) }
+        [pscustomobject]@{ Name = 'ADD_21_0 の位置'; Value = [string]::Format($ic, '+{0} (Double, 8 byte ÷ 1000)', $Data.Value21Offset) }
         [pscustomobject]@{ Name = 'レコード数'; Value = [string]::Format($ic, '{0:N0}', $Data.RecordCount) }
         [pscustomobject]@{ Name = '無効レコード'; Value = [string]::Format($ic, '{0:N0} (NaN / Infinity を含む)', $Data.InvalidCount) }
         [pscustomobject]@{ Name = '末尾の端数'; Value = [string]::Format($ic, '{0} byte{1}', $Data.TrailingBytes,
@@ -1244,7 +1244,7 @@ function Update-NCLogViewerChartCursor {
     $Context.UI.HoverText.Text = [string]::Format([System.Globalization.CultureInfo]::InvariantCulture,
         'No.{0}   ADD_40_0 = {1:0.######} W   ADD_21_0 = {2:0.######} mm/min{3}',
         $index, $data.Value40[$index], $data.Value21[$index],
-        $(if ([float]::IsFinite($data.Value40[$index]) -and [float]::IsFinite($data.Value21[$index])) { '   (右クリックで取得)' } else { '   (無効レコード)' }))
+        $(if ([double]::IsFinite($data.Value40[$index]) -and [double]::IsFinite($data.Value21[$index])) { '   (右クリックで取得)' } else { '   (無効レコード)' }))
 }
 
 function Select-NCLogViewerOutputDirectory {

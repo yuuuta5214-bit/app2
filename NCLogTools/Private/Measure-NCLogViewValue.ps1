@@ -10,7 +10,7 @@
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory)][AllowEmptyCollection()][float[]]$Value,
+        [Parameter(Mandatory)][AllowEmptyCollection()][double[]]$Value,
         [AllowEmptyCollection()][bool[]]$Valid
     )
 
@@ -28,7 +28,7 @@
         if ($useMask) {
             if (-not $Valid[$i]) { continue }
         }
-        elseif (-not [float]::IsFinite($Value[$i])) {
+        elseif (-not [double]::IsFinite($Value[$i])) {
             continue
         }
         $x = [double]$Value[$i]

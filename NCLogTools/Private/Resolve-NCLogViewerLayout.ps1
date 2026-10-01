@@ -29,11 +29,10 @@
         $layout[$item.Name] = [int]$value
     }
 
-    foreach ($name in 'Value40Offset', 'Value21Offset') {
-        if ($layout[$name] + 4 -gt $layout.RecordSize) {
-            throw [System.ArgumentException]::new(
-                "$name ($($layout[$name])) + 4 byte がレコードサイズ $($layout.RecordSize) を超えています。")
-        }
+    $problem = Get-NCLogLayoutProblem -RecordSize $layout.RecordSize -Value40Offset $layout.Value40Offset `
+        -Value21Offset $layout.Value21Offset
+    if ($null -ne $problem) {
+        throw [System.ArgumentException]::new($problem.Message)
     }
 
     $layout

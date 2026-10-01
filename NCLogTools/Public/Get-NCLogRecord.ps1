@@ -12,9 +12,10 @@
 
         既定のバイナリレイアウト (Get-NCLogFileInfo で実ファイルを確認してください):
             [Header 0x20 byte][Record 16 byte][Record 16 byte]...
-            Record 内: +4 = ADD_40_0 (float32 LE), +8 = ADD_21_0 (float32 LE)
+            Record 内: +4 = ADD_40_0 (UInt16 LE, 2 byte。値はそのまま W)
+                       +8 = ADD_21_0 (Double LE, 8 byte。1000 で割った値が mm/min)
 
-        どちらか一方でも NaN / ±Infinity のレコードはレコードごと除外するため、
+        ADD_21_0 が NaN / ±Infinity のレコードはレコードごと除外するため、
         2値の対応がずれることはありません。RecordNumber はファイル内の実レコード番号 (0 始まり) です。
 
         オブジェクトは読み込みながら逐次出力されるため、Select-Object -First などで
@@ -40,10 +41,10 @@
         1レコードのバイト数。既定 16。
 
     .PARAMETER Value40Offset
-        レコード先頭から ADD_40_0 までのバイトオフセット。既定 4。
+        レコード先頭から ADD_40_0 (UInt16 2 byte) までのバイトオフセット。既定 4。
 
     .PARAMETER Value21Offset
-        レコード先頭から ADD_21_0 までのバイトオフセット。既定 8。
+        レコード先頭から ADD_21_0 (Double 8 byte) までのバイトオフセット。既定 8。
 
     .INPUTS
         System.String, System.IO.FileInfo
@@ -153,6 +154,7 @@
                 [void]$stream.Seek($HeaderSize, [System.IO.SeekOrigin]::Begin)
                 $skipped = 0L
                 $i = 0L
+                $divisor = $script:NCLogValue21Divisor
 
                 while ($i -lt $recordCount -and $emitted -lt $MaxRecords) {
                     $inChunk = [int][Math]::Min($chunkRecords, $recordCount - $i)
@@ -163,11 +165,12 @@
                         $recordNumber = $i
                         $i++
 
-                        $v40 = [System.BitConverter]::ToSingle($buffer, $base + $Value40Offset)
-                        $v21 = [System.BitConverter]::ToSingle($buffer, $base + $Value21Offset)
+                        # 形式は NCLogRecordFormat.ps1 の定義どおり (UInt16 / Double ÷ 1000)
+                        $v40 = [int][System.BitConverter]::ToUInt16($buffer, $base + $Value40Offset)
+                        $v21 = [System.BitConverter]::ToDouble($buffer, $base + $Value21Offset) / $divisor
 
-                        # 片方でも無効ならレコードごと捨てる (列ずれ防止)
-                        if (-not ([float]::IsFinite($v40) -and [float]::IsFinite($v21))) {
+                        # ワイヤ速度が無効ならレコードごと捨てる (列ずれ防止)
+                        if (-not [double]::IsFinite($v21)) {
                             $skipped++
                             continue
                         }

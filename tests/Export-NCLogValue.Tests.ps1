@@ -5,9 +5,9 @@ BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '..' 'NCLogTools' 'NCLogTools.psd1') -Force
 
     $script:log = New-NCLogTestFile -Path (Join-Path $TestDrive 'NCLog_export.BIN') -Records @(
-        @{ V40 = 10.5; V21 = 1000 }
+        @{ V40 = 2000; V21 = 1000.5 }
         @{ V40 = 0; V21 = 0 }
-        @{ V40 = 30.25; V21 = 3000 }
+        @{ V40 = 1500; V21 = 812.25 }
     )
 }
 
@@ -23,8 +23,8 @@ Describe 'Export-NCLogValue' {
             $csv.Count | Should -Be 4
             $csv[0] | Should -Be '"SourceFile","RecordNumber","Value40","Value21"'
             $rows = $csv | ConvertFrom-Csv
-            $rows[2].Value40 | Should -Be '30.25'
-            $rows[2].Value21 | Should -Be '3000'
+            $rows[2].Value40 | Should -Be '1500'
+            $rows[2].Value21 | Should -Be '812.25'
         }
 
         It 'TSV はタブ区切り' {
@@ -36,19 +36,19 @@ Describe 'Export-NCLogValue' {
             $json = Export-NCLogValue -Path $log.FullName -Format JSON -MaxRecords 1 | Out-String
             $parsed = $json | ConvertFrom-Json -NoEnumerate
             $parsed.Count | Should -Be 1
-            $parsed[0].Value40 | Should -Be 10.5
+            $parsed[0].Value40 | Should -Be 2000
             $parsed[0].PSObject.Properties.Name | Should -Be @('SourceFile', 'RecordNumber', 'Value40', 'Value21')
         }
 
         It 'Raw は "RecordNumber,Value40,Value21"' {
-            Export-NCLogValue -Path $log.FullName -Format Raw | Should -Be @('0,10.5,1000', '1,0,0', '2,30.25,3000')
+            Export-NCLogValue -Path $log.FullName -Format Raw | Should -Be @('0,2000,1000.5', '1,0,0', '2,1500,812.25')
         }
 
         It 'Raw はカルチャに依存しない (小数点がカンマのロケールでも "." を使う)' {
             $original = [System.Globalization.CultureInfo]::CurrentCulture
             try {
                 [System.Globalization.CultureInfo]::CurrentCulture = 'de-DE'
-                (Export-NCLogValue -Path $log.FullName -Format Raw)[0] | Should -Be '0,10.5,1000'
+                (Export-NCLogValue -Path $log.FullName -Format Raw)[0] | Should -Be '0,2000,1000.5'
             }
             finally {
                 [System.Globalization.CultureInfo]::CurrentCulture = $original
@@ -58,7 +58,7 @@ Describe 'Export-NCLogValue' {
         It 'Table は書式データを返し、文字列化すると列見出しを含む' {
             $text = Export-NCLogValue -Path $log.FullName | Out-String -Width 200
             $text | Should -Match 'RecordNumber'
-            $text | Should -Match '30\.25'
+            $text | Should -Match '812\.25'
         }
 
         It '-AsObject は NCLog.Record を返す' {
@@ -120,7 +120,7 @@ Describe 'Export-NCLogValue' {
         It '-Force なら上書きする' {
             Set-Content -LiteralPath $out -Value 'old'
             Export-NCLogValue -Path $log.FullName -Format Raw -OutputPath $out -Force 6>$null
-            Get-Content -LiteralPath $out | Should -Be @('0,10.5,1000', '1,0,0', '2,30.25,3000')
+            Get-Content -LiteralPath $out | Should -Be @('0,2000,1000.5', '1,0,0', '2,1500,812.25')
         }
 
         It '-WhatIf ではファイルを作らない' {

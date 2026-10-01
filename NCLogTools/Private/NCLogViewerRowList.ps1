@@ -39,8 +39,8 @@ class NCLogRecordRow : NCLogViewRow {
     [long]$RecordNumber
     [long]$Offset
     [string]$Address
-    [float]$Value40
-    [float]$Value21
+    [double]$Value40
+    [double]$Value21
     [bool]$IsValid
 }
 
@@ -159,12 +159,12 @@ class NCLogHexRowList : NCLogViewRowList {
 }
 
 class NCLogRecordRowList : NCLogViewRowList {
-    hidden [float[]]$Value40
-    hidden [float[]]$Value21
+    hidden [double[]]$Value40
+    hidden [double[]]$Value21
     hidden [int]$HeaderSize
     hidden [int]$RecordSize
 
-    NCLogRecordRowList([float[]]$value40, [float[]]$value21, [int]$headerSize, [int]$recordSize) : base($value40.Length) {
+    NCLogRecordRowList([double[]]$value40, [double[]]$value21, [int]$headerSize, [int]$recordSize) : base($value40.Length) {
         $this.Value40 = $value40
         $this.Value21 = $value21
         $this.HeaderSize = $headerSize
@@ -179,7 +179,7 @@ class NCLogRecordRowList : NCLogViewRowList {
         $row.Address = $row.Offset.ToString('X8')
         $row.Value40 = $this.Value40[$index]
         $row.Value21 = $this.Value21[$index]
-        $row.IsValid = [float]::IsFinite($row.Value40) -and [float]::IsFinite($row.Value21)
+        $row.IsValid = [double]::IsFinite($row.Value40) -and [double]::IsFinite($row.Value21)
         return $row
     }
 }
@@ -214,8 +214,8 @@ function New-NCLogRecordRowList {
     [CmdletBinding()]
     [OutputType([System.Collections.IList])]
     param(
-        [Parameter(Mandatory)][AllowEmptyCollection()][float[]]$Value40,
-        [Parameter(Mandatory)][AllowEmptyCollection()][float[]]$Value21,
+        [Parameter(Mandatory)][AllowEmptyCollection()][double[]]$Value40,
+        [Parameter(Mandatory)][AllowEmptyCollection()][double[]]$Value21,
         [Parameter(Mandatory)][int]$HeaderSize,
         [Parameter(Mandatory)][int]$RecordSize
     )

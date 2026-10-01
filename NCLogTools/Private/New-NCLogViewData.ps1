@@ -6,7 +6,10 @@
         ファイルを読み直さずにレイアウトだけ変えて再解析できるよう、バイト列を受け取る。
         レコードの扱いは Get-NCLogRecord と同じ:
         - 末尾の不完全なレコードは TrailingBytes として無視する
-        - Value40 / Value21 のどちらかが NaN / ±Infinity なら無効レコード (統計・CSV の対象外)
+        - 値の形式は NCLogRecordFormat.ps1 の定義どおり
+            Value40 = ADD_40_0: UInt16 (W)
+            Value21 = ADD_21_0: Double を 1000 で割った値 (mm/min)
+        - Value21 が NaN / ±Infinity なら無効レコード (統計・CSV の対象外)
         Plot40 / Plot21 はグラフ用で、無効値を直前の有効値 (先頭なら 0) で置き換えている。
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
@@ -26,9 +29,12 @@
     if (-not [System.BitConverter]::IsLittleEndian) {
         throw [System.PlatformNotSupportedException]::new('ビッグエンディアン環境はサポートしていません。')
     }
-    if ($RecordSize -le 0 -or $HeaderSize -lt 0 -or $Value40Offset -lt 0 -or $Value21Offset -lt 0 -or
-        $Value40Offset + 4 -gt $RecordSize -or $Value21Offset + 4 -gt $RecordSize) {
+    if ($RecordSize -le 0 -or $HeaderSize -lt 0) {
         throw [System.ArgumentException]::new('レコードレイアウトが不正です。')
+    }
+    $problem = Get-NCLogLayoutProblem -RecordSize $RecordSize -Value40Offset $Value40Offset -Value21Offset $Value21Offset
+    if ($null -ne $problem) {
+        throw [System.ArgumentException]::new("レコードレイアウトが不正です。$($problem.Message)")
     }
 
     $length = $Bytes.Length
@@ -36,22 +42,24 @@
     $recordCount = [int][Math]::Floor($dataLength / $RecordSize)
     $trailing = $dataLength % $RecordSize
 
-    $v40 = [float[]]::new($recordCount)
-    $v21 = [float[]]::new($recordCount)
-    $plot40 = [float[]]::new($recordCount)
-    $plot21 = [float[]]::new($recordCount)
+    $v40 = [double[]]::new($recordCount)
+    $v21 = [double[]]::new($recordCount)
+    $plot40 = [double[]]::new($recordCount)
+    $plot21 = [double[]]::new($recordCount)
     $valid = [bool[]]::new($recordCount)
     $invalid = 0
-    $last40 = [float]0
-    $last21 = [float]0
+    $last40 = 0.0
+    $last21 = 0.0
+    $divisor = $script:NCLogValue21Divisor
 
     for ($i = 0; $i -lt $recordCount; $i++) {
         $base = $HeaderSize + $i * $RecordSize
-        $a = [System.BitConverter]::ToSingle($Bytes, $base + $Value40Offset)
-        $b = [System.BitConverter]::ToSingle($Bytes, $base + $Value21Offset)
+        $a = [double][System.BitConverter]::ToUInt16($Bytes, $base + $Value40Offset)
+        $b = [System.BitConverter]::ToDouble($Bytes, $base + $Value21Offset) / $divisor
         $v40[$i] = $a
         $v21[$i] = $b
-        if ([float]::IsFinite($a) -and [float]::IsFinite($b)) {
+        # レーザー出力 (整数) は常に有効。ワイヤ速度が NaN / ±Infinity なら無効レコード
+        if ([double]::IsFinite($b)) {
             $valid[$i] = $true
             $last40 = $a
             $last21 = $b

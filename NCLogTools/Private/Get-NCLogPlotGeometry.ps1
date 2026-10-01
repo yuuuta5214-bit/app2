@@ -16,7 +16,7 @@
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory)][AllowEmptyCollection()][float[]]$Value,
+        [Parameter(Mandatory)][AllowEmptyCollection()][double[]]$Value,
         [Parameter(Mandatory)][int]$Start,
         [Parameter(Mandatory)][int]$End,
         [Parameter(Mandatory)][ValidateRange(1, 100000)][double]$Width,
@@ -35,7 +35,7 @@
     if ($End -lt $Start) { return $empty }
 
     $n = $End - $Start + 1
-    $segment = [System.ArraySegment[float]]::new($Value, $Start, $n)
+    $segment = [System.ArraySegment[double]]::new($Value, $Start, $n)
     $min = if ($null -ne $Minimum) { [double]$Minimum } else { [double][System.Linq.Enumerable]::Min($segment) }
     $max = if ($null -ne $Maximum) { [double]$Maximum } else { [double][System.Linq.Enumerable]::Max($segment) }
     $span = $max - $min
@@ -71,7 +71,7 @@
         for ($c = 0; $c -lt $columns; $c++) {
             $s = [int][Math]::Floor([double]$c * $n / $columns)
             $e = [int][Math]::Floor([double]($c + 1) * $n / $columns)
-            $bucket = [System.ArraySegment[float]]::new($Value, $Start + $s, [Math]::Max(1, $e - $s))
+            $bucket = [System.ArraySegment[double]]::new($Value, $Start + $s, [Math]::Max(1, $e - $s))
             $x = ($c + 0.5) / $columns * $Width
             $lo = [System.Linq.Enumerable]::Min($bucket)
             $hi = [System.Linq.Enumerable]::Max($bucket)
