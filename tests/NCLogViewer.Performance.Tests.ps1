@@ -273,7 +273,14 @@ Describe 'CSV 出力の高速版 (Write-NCLogViewCsv)' {
         $sw.Elapsed.TotalSeconds | Should -BeLessThan 5
         # 書き終えたら解析結果は残らない
         ([System.GC]::GetTotalMemory($true) - $before) / 1MB | Should -BeLessThan 30
-        $lines = [System.IO.File]::ReadLines($out) | Select-Object -First 3
+        # ReadLines | Select-Object -First は途中で止めるとファイルを開いたままにする (Windows では後始末で削除できない)
+        $reader = [System.IO.StreamReader]::new($out)
+        try {
+            $lines = @($reader.ReadLine(), $reader.ReadLine())
+        }
+        finally {
+            $reader.Dispose()
+        }
         $lines[0] | Should -Be '"SourceFile","RecordNumber","Value40","Value21"'
         $lines[1] | Should -BeLike '*"0","0","0.25"'
     }
