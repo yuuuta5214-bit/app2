@@ -106,14 +106,14 @@ Describe 'Show-NCLogViewer' {
         It '解決した絶対パスとレイアウトをウィンドウに渡す' {
             Push-Location -LiteralPath $TestDrive
             try {
-                Show-NCLogViewer -Path '.\NCLog_view.BIN' -HeaderSize 0x20 -RecordSize 16 -Value40Offset 8 -Value21Offset 4
+                Show-NCLogViewer -Path '.\NCLog_view.BIN' -HeaderSize 0x40 -RecordSize 24 -Value40Offset 2 -Value21Offset 16
             }
             finally {
                 Pop-Location
             }
             Should -Invoke -ModuleName NCLogTools -CommandName Start-NCLogViewerWindow -Times 1 -Exactly -ParameterFilter {
-                $LiteralFilePath.Count -eq 1 -and $LiteralFilePath[0] -eq $log.FullName -and $HeaderSize -eq 0x20 -and $RecordSize -eq 16 -and
-                $Value40Offset -eq 8 -and $Value21Offset -eq 4
+                $LiteralFilePath.Count -eq 1 -and $LiteralFilePath[0] -eq $log.FullName -and $HeaderSize -eq 0x40 -and $RecordSize -eq 24 -and
+                $Value40Offset -eq 2 -and $Value21Offset -eq 16
             }
         }
 
