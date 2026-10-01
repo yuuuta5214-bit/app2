@@ -30,10 +30,11 @@ function New-NCLogTestFile {
     param(
         [Parameter(Mandatory)][string]$Path,
         [AllowEmptyCollection()][hashtable[]]$Records = @(),
-        [int]$HeaderSize = 0x20,
-        [int]$RecordSize = 16,
-        [int]$Value40Offset = 4,
-        [int]$Value21Offset = 8,
+        # 既定は実機ログのレイアウト (ヘッダーなし / 368 byte / +328 / +160)
+        [int]$HeaderSize = 0,
+        [int]$RecordSize = 368,
+        [int]$Value40Offset = 328,
+        [int]$Value21Offset = 160,
         [int]$TrailingBytes = 0
     )
 
@@ -54,3 +55,7 @@ function New-NCLogTestFile {
     [System.IO.File]::WriteAllBytes($full, $bytes)
     Get-Item -LiteralPath $full
 }
+
+# 以前の仮のレイアウト (ヘッダー 0x20 / 16 byte / +4 / +8)。レイアウト指定や16進表示など、
+# 小さなデータで仕組みを確認するテストで使う:  New-NCLogTestFile ... @LegacyLayout
+$script:LegacyLayout = @{ HeaderSize = 0x20; RecordSize = 16; Value40Offset = 4; Value21Offset = 8 }

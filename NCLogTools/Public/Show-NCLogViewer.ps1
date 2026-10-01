@@ -33,16 +33,16 @@
         ワイルドカードとして解釈しないパス (複数可。'[' などを含むファイル名用)。
 
     .PARAMETER HeaderSize
-        起動時のヘッダーのバイト数。既定 0x20 (32)。画面の [既定値] ボタンでこの値に戻ります。
+        起動時のヘッダーのバイト数。既定 0 (ヘッダーなし)。画面の [既定値] ボタンでこの値に戻ります。
 
     .PARAMETER RecordSize
-        起動時の1レコードのバイト数。既定 16。
+        起動時の1レコードのバイト数。既定 368。
 
     .PARAMETER Value40Offset
-        起動時の、レコード先頭から ADD_40_0 までのバイトオフセット。既定 4。
+        起動時の、レコード先頭から ADD_40_0 までのバイトオフセット。既定 328。
 
     .PARAMETER Value21Offset
-        起動時の、レコード先頭から ADD_21_0 までのバイトオフセット。既定 8。
+        起動時の、レコード先頭から ADD_21_0 までのバイトオフセット。既定 160。
 
     .INPUTS
         None
@@ -97,16 +97,16 @@
         [string[]]$LiteralPath,
 
         [ValidateRange(0, 1MB)]
-        [int]$HeaderSize = 0x20,
+        [int]$HeaderSize = 0,
 
         [ValidateRange(8, 64KB)]
-        [int]$RecordSize = 16,
+        [int]$RecordSize = 368,
 
         [ValidateRange(0, 64KB)]
-        [int]$Value40Offset = 4,
+        [int]$Value40Offset = 328,
 
         [ValidateRange(0, 64KB)]
-        [int]$Value21Offset = 8
+        [int]$Value21Offset = 160
     )
 
     Assert-NCLogLayout -Cmdlet $PSCmdlet -RecordSize $RecordSize `

@@ -129,7 +129,7 @@ Describe '大きなファイル (100 万レコード) でも固まらない' {
 
 Describe 'ファイル一覧の解析結果の保持 (選択中のファイルだけ)' {
     BeforeAll {
-        $script:smallPath = (New-NCLogTestFile -Path (Join-Path $TestDrive 'NCLog_small.BIN') -Records @(
+        $script:smallPath = (New-NCLogTestFile -Path (Join-Path $TestDrive 'NCLog_small.BIN') @LegacyLayout -Records @(
                 @{ V40 = 2000; V21 = 1000 }
                 @{ V40 = 1500; V21 = [double]::NaN }
                 @{ V40 = 1800; V21 = 900.5 }
@@ -180,7 +180,7 @@ Describe 'ファイル一覧の解析結果の保持 (選択中のファイル�
     }
 
     It '読み直すときにファイルがなければ例外 (画面ではメッセージを表示して空の表示にする)' {
-        $gone = (New-NCLogTestFile -Path (Join-Path $TestDrive 'NCLog_gone.BIN') -Records @(@{ V40 = 1; V21 = 1 })).FullName
+        $gone = (New-NCLogTestFile -Path (Join-Path $TestDrive 'NCLog_gone.BIN') @LegacyLayout -Records @(@{ V40 = 1; V21 = 1 })).FullName
         {
             InModuleScope NCLogTools -Parameters @{ P = $gone; L = $layout } {
                 param($P, $L)
@@ -213,6 +213,8 @@ Describe 'ファイル一覧の解析結果の保持 (選択中のファイル�
 Describe 'CSV 出力の高速版 (Write-NCLogViewCsv)' {
     BeforeAll {
         $script:layout16 = @{ HeaderSize = 0x20; RecordSize = 16; Value40Offset = 4; Value21Offset = 8 }
+        # 実機ログのレイアウト (New-NCLogTestFile と Export-NCLogValue の既定)
+        $script:layoutReal = @{ HeaderSize = 0; RecordSize = 368; Value40Offset = 328; Value21Offset = 160 }
         # 数値の表記が揺れやすい値と、パスに " を含む場合 (Windows では使えないため Linux/macOS のみ) を確認する
         $name = if ($IsWindows) { 'NCLog_csv.BIN' } else { 'NCLog_"q".BIN' }
         $script:csvSource = (New-NCLogTestFile -Path (Join-Path $TestDrive $name) -Records @(
@@ -231,7 +233,7 @@ Describe 'CSV 出力の高速版 (Write-NCLogViewCsv)' {
         $expected = Join-Path $TestDrive "expected_$Mode.csv"
         $actual = Join-Path $TestDrive "actual_$Mode.csv"
         Export-NCLogValue -LiteralPath $csvSource -Format CSV -OutputPath $expected -Force 6>$null
-        $written = InModuleScope NCLogTools -Parameters @{ S = $csvSource; O = $actual; L = $layout16; D = ($Mode -eq 'PowerShell') } {
+        $written = InModuleScope NCLogTools -Parameters @{ S = $csvSource; O = $actual; L = $layoutReal; D = ($Mode -eq 'PowerShell') } {
             param($S, $O, $L, $D)
             $script:NCLogNativeDisabled = $D
             try { Write-NCLogViewCsv -SourcePath $S -OutputPath $O -Layout $L } finally { $script:NCLogNativeDisabled = $false }
@@ -243,7 +245,7 @@ Describe 'CSV 出力の高速版 (Write-NCLogViewCsv)' {
     It '既存ファイルは Force がなければ上書きせず、残す' {
         $out = Join-Path $TestDrive 'exists.csv'
         Set-Content -LiteralPath $out -Value 'keep' -NoNewline
-        { InModuleScope NCLogTools -Parameters @{ S = $csvSource; O = $out; L = $layout16 } {
+        { InModuleScope NCLogTools -Parameters @{ S = $csvSource; O = $out; L = $layoutReal } {
                 param($S, $O, $L)
                 Write-NCLogViewCsv -SourcePath $S -OutputPath $O -Layout $L
             } } | Should -Throw
@@ -252,7 +254,7 @@ Describe 'CSV 出力の高速版 (Write-NCLogViewCsv)' {
 
     It '読み込みに失敗したら CSV を作らない' {
         $out = Join-Path $TestDrive 'never.csv'
-        { InModuleScope NCLogTools -Parameters @{ S = (Join-Path $TestDrive 'missing.BIN'); O = $out; L = $layout16 } {
+        { InModuleScope NCLogTools -Parameters @{ S = (Join-Path $TestDrive 'missing.BIN'); O = $out; L = $layoutReal } {
                 param($S, $O, $L)
                 Write-NCLogViewCsv -SourcePath $S -OutputPath $O -Layout $L
             } } | Should -Throw
@@ -292,7 +294,7 @@ Describe 'CSV 出力の高速版 (Write-NCLogViewCsv)' {
             $log = [System.Collections.Generic.List[string]]::new()
             $items = foreach ($n in 'a', 'b') {
                 [pscustomobject]@{ SourcePath = $S; OutputPath = (Join-Path $D "$n.csv"); ValidCount = 7
-                    HeaderSize = 0x20; RecordSize = 16; Value40Offset = 4; Value21Offset = 8 }
+                    HeaderSize = 0; RecordSize = 368; Value40Offset = 328; Value21Offset = 160 }
             }
             $r = @(Invoke-NCLogBatchCsvExport -Item @($items) -OnProgress { param($i, $n, $it) $log.Add("$i/$n $([System.IO.Path]::GetFileName($it.OutputPath))") })
             $r.Result | Should -Be @('Exported', 'Exported')

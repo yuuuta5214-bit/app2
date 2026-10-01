@@ -107,11 +107,16 @@ v1.0 からの呼び出し (`.\Export-NCLogValues.ps1 -FilePath ...`) はその�
 
 ## バイナリレイアウト
 
+実機ログ (NCLog_00000000_00001888.BIN) で確認したレイアウトです。
+
 ```
-[Header 0x20 byte][Record 16 byte][Record 16 byte]...
-Record: +4 = ADD_40_0 (UInt16 LE, 2 byte)  値はそのまま W
-        +8 = ADD_21_0 (Double LE, 8 byte)  1000 で割った値が mm/min
+[Record 368 byte][Record 368 byte]...   ヘッダーなし。ファイルサイズ = 368 × レコード数
+Record: +0   = レコード番号 (Int32 LE)
+        +160 = ADD_21_0 実ワイヤ速度 (Double LE, 8 byte)  1000 で割った値が mm/min
+        +328 = ADD_40_0 実レーザー出力 (UInt16 LE, 2 byte)  値はそのまま W
 ```
+
+参考 (読み出しには使っていません): +152 は ワイヤ速度の指令値 (Double ÷ 1000)、+320 は レーザー出力の指令値 (UInt16) と思われます。
 
 - ADD_21_0 が NaN / ±Infinity のレコードは無効レコードとして除外します (CSV・統計の対象外)。
 - 値の形式は `NCLogTools/Private/NCLogRecordFormat.ps1` で定義しています。

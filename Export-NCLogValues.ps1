@@ -48,16 +48,16 @@
     出力ファイルの文字コード。既定 utf8BOM。
 
 .PARAMETER HeaderSize
-    ヘッダーのバイト数。既定 0x20。
+    ヘッダーのバイト数。既定 0 (ヘッダーなし)。
 
 .PARAMETER RecordSize
-    1レコードのバイト数。既定 16。
+    1レコードのバイト数。既定 368。
 
 .PARAMETER Value40Offset
-    レコード内の ADD_40_0 のオフセット。既定 4。
+    レコード内の ADD_40_0 のオフセット。既定 328。
 
 .PARAMETER Value21Offset
-    レコード内の ADD_21_0 のオフセット。既定 8。
+    レコード内の ADD_21_0 のオフセット。既定 160。
 
 .EXAMPLE
     .\Export-NCLogValues.ps1 -FilePath 'NCLog_00000000_00003044.BIN'
@@ -111,16 +111,16 @@ param(
     [string]$Encoding = 'utf8BOM',
 
     [ValidateRange(0, 1MB)]
-    [int]$HeaderSize = 0x20,
+    [int]$HeaderSize = 0,
 
     [ValidateRange(8, 64KB)]
-    [int]$RecordSize = 16,
+    [int]$RecordSize = 368,
 
     [ValidateRange(0, 64KB)]
-    [int]$Value40Offset = 4,
+    [int]$Value40Offset = 328,
 
     [ValidateRange(0, 64KB)]
-    [int]$Value21Offset = 8
+    [int]$Value21Offset = 160
 )
 
 begin {

@@ -162,8 +162,8 @@ Describe 'Show-NCLogViewer' {
         It 'パス省略時はファイルなしで既定レイアウトのウィンドウを開く' {
             Show-NCLogViewer
             Should -Invoke -ModuleName NCLogTools -CommandName Start-NCLogViewerWindow -Times 1 -Exactly -ParameterFilter {
-                @($LiteralFilePath).Count -eq 0 -and $HeaderSize -eq 0x20 -and $RecordSize -eq 16 -and
-                $Value40Offset -eq 4 -and $Value21Offset -eq 8
+                @($LiteralFilePath).Count -eq 0 -and $HeaderSize -eq 0 -and $RecordSize -eq 368 -and
+                $Value40Offset -eq 328 -and $Value21Offset -eq 160
             }
         }
 

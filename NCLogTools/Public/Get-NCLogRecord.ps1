@@ -11,9 +11,10 @@
         - Value21 = ADD_21_0: realWirFeed_vel    (実ワイヤフィード速度 mm/min)
 
         既定のバイナリレイアウト (Get-NCLogFileInfo で実ファイルを確認してください):
-            [Header 0x20 byte][Record 16 byte][Record 16 byte]...
-            Record 内: +4 = ADD_40_0 (UInt16 LE, 2 byte。値はそのまま W)
-                       +8 = ADD_21_0 (Double LE, 8 byte。1000 で割った値が mm/min)
+            [Record 368 byte][Record 368 byte]...  (ヘッダーなし。実機ログ NCLog_*.BIN で確認済み)
+            Record 内: +0   = レコード番号 (Int32)
+                       +160 = ADD_21_0 (Double LE, 8 byte。1000 で割った値が mm/min)
+                       +328 = ADD_40_0 (UInt16 LE, 2 byte。値はそのまま W)
 
         ADD_21_0 が NaN / ±Infinity のレコードはレコードごと除外するため、
         2値の対応がずれることはありません。RecordNumber はファイル内の実レコード番号 (0 始まり) です。
@@ -35,16 +36,16 @@
         出力する最大レコード数 (全ファイル合計)。既定: 無制限
 
     .PARAMETER HeaderSize
-        ファイル先頭ヘッダーのバイト数。既定 0x20 (32)。
+        ファイル先頭ヘッダーのバイト数。既定 0 (ヘッダーなし)。
 
     .PARAMETER RecordSize
-        1レコードのバイト数。既定 16。
+        1レコードのバイト数。既定 368。
 
     .PARAMETER Value40Offset
-        レコード先頭から ADD_40_0 (UInt16 2 byte) までのバイトオフセット。既定 4。
+        レコード先頭から ADD_40_0 (UInt16 2 byte) までのバイトオフセット。既定 328。
 
     .PARAMETER Value21Offset
-        レコード先頭から ADD_21_0 (Double 8 byte) までのバイトオフセット。既定 8。
+        レコード先頭から ADD_21_0 (Double 8 byte) までのバイトオフセット。既定 160。
 
     .INPUTS
         System.String, System.IO.FileInfo
@@ -99,16 +100,16 @@
         [long]$MaxRecords = [long]::MaxValue,
 
         [ValidateRange(0, 1MB)]
-        [int]$HeaderSize = 0x20,
+        [int]$HeaderSize = 0,
 
         [ValidateRange(8, 64KB)]
-        [int]$RecordSize = 16,
+        [int]$RecordSize = 368,
 
         [ValidateRange(0, 64KB)]
-        [int]$Value40Offset = 4,
+        [int]$Value40Offset = 328,
 
         [ValidateRange(0, 64KB)]
-        [int]$Value21Offset = 8
+        [int]$Value21Offset = 160
     )
 
     begin {

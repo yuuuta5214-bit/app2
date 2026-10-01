@@ -45,19 +45,51 @@ Describe 'Get-NCLogRecord' {
             $r.Value21 | Should -BeOfType [double]
         }
 
-        It 'ADD_40_0 は +4 の UInt16 (2 byte)、ADD_21_0 は +8 の Double を 1000 で割った値' {
-            $bytes = [byte[]]::new(0x20 + 16)
-            [System.BitConverter]::GetBytes([uint16]65535).CopyTo($bytes, 0x20 + 4)
-            # +6～+7 はレーザー出力に含まれない (UInt16 の範囲外の値で確認する)
-            $bytes[0x20 + 6] = 0xFF
-            $bytes[0x20 + 7] = 0xFF
-            [System.BitConverter]::GetBytes([double]1234567).CopyTo($bytes, 0x20 + 8)
+        It '既定 (実機ログ): ヘッダーなし・368 byte、ADD_40_0 は +328 の UInt16、ADD_21_0 は +160 の Double を 1000 で割った値' {
+            $bytes = [byte[]]::new(368)
+            [System.BitConverter]::GetBytes([uint16]65535).CopyTo($bytes, 328)
+            # +330～+331 はレーザー出力に含まれない (UInt16 の範囲外の値で確認する)
+            $bytes[330] = 0xFF
+            $bytes[331] = 0xFF
+            [System.BitConverter]::GetBytes([double]1234567).CopyTo($bytes, 160)
             $raw = Join-Path $TestDrive 'NCLog_raw.BIN'
             [System.IO.File]::WriteAllBytes($raw, $bytes)
 
             $r = Get-NCLogRecord -Path $raw
             $r.Value40 | Should -Be 65535
             $r.Value21 | Should -Be 1234.567
+        }
+
+        It '実機ログと同じ構造のファイルを既定のレイアウトで正しく読む (指令値ではなく実測値を読む)' {
+            # 実機ログ NCLog_00000000_00001888.BIN の構造を再現する (値は合成):
+            #   368 byte/レコード・ヘッダーなし、+0 レコード番号、+152 ワイヤ指令 (Double ×1000)、
+            #   +160 実ワイヤ速度 (Double ×1000)、+320 レーザー指令 (UInt16)、+328 実レーザー出力 (UInt16)
+            $count = 40
+            $bytes = [byte[]]::new($count * 368)
+            for ($i = 0; $i -lt $count; $i++) {
+                $o = $i * 368
+                $on = $i -ge 10 -and $i -lt 30
+                [System.BitConverter]::GetBytes([int]$i).CopyTo($bytes, $o)
+                [System.BitConverter]::GetBytes([double]$(if ($on) { 1900000 } else { 0 })).CopyTo($bytes, $o + 152)
+                [System.BitConverter]::GetBytes([double]$(if ($on) { 1900000 + ($i % 5 - 2) * 8000 } else { 1181 })).CopyTo($bytes, $o + 160)
+                [System.BitConverter]::GetBytes([uint16]$(if ($on) { 2000 } else { 0 })).CopyTo($bytes, $o + 320)
+                [System.BitConverter]::GetBytes([uint16]$(if ($on) { 1999 + $i % 3 } else { 53 })).CopyTo($bytes, $o + 328)
+            }
+            $real = Join-Path $TestDrive 'NCLog_00000000_00000039.BIN'
+            [System.IO.File]::WriteAllBytes($real, $bytes)
+
+            $r = @(Get-NCLogRecord -Path $real)
+            $r.Count | Should -Be $count
+            $r[0].Value40 | Should -Be 53
+            $r[0].Value21 | Should -Be 1.181
+            $r[12].Value40 | Should -Be 1999
+            $r[12].Value21 | Should -Be 1900
+            $r[13].Value40 | Should -Be 2000
+            $r[13].Value21 | Should -Be 1908
+            $on = $r | Where-Object { $_.RecordNumber -ge 10 -and $_.RecordNumber -lt 30 }
+            ($on.Value40 | Measure-Object -Average).Average | Should -BeGreaterThan 1998
+            ($on.Value21 | Measure-Object -Average).Average | Should -BeGreaterThan 1890
+            (Get-NCLogFileInfo -Path $real).TrailingBytes | Should -Be 0
         }
 
         It '-FilePath 別名を受け付ける (v1.0 互換)' {
@@ -75,7 +107,7 @@ Describe 'Get-NCLogRecord' {
             $big = Join-Path $TestDrive 'NCLog_big.BIN'
             [System.IO.File]::WriteAllBytes($big, $bytes)
 
-            $r = @(Get-NCLogRecord -Path $big)
+            $r = @(Get-NCLogRecord -Path $big @LegacyLayout)
             $r.Count | Should -Be $count
             $r[65535].Value40 | Should -Be 65535
             $r[65536].Value40 | Should -Be 0
@@ -242,8 +274,9 @@ Describe 'Get-NCLogRecord' {
         }
 
         It 'オフセットがレコードからはみ出す場合は InvalidRecordLayout で終了する: <Name>' -ForEach @(
-            @{ Name = 'ADD_21_0 (8 byte) が +9～+16'; P = @{ Value21Offset = 9 } }
-            @{ Name = 'ADD_40_0 (2 byte) が +15～+16'; P = @{ Value40Offset = 15 } }
+            @{ Name = 'ADD_21_0 (8 byte) が +9～+16'; P = @{ RecordSize = 16; Value40Offset = 4; Value21Offset = 9 } }
+            @{ Name = 'ADD_40_0 (2 byte) が +15～+16'; P = @{ RecordSize = 16; Value40Offset = 15; Value21Offset = 0 } }
+            @{ Name = 'ADD_40_0 (2 byte) が +367～+368'; P = @{ Value40Offset = 367 } }
         ) {
             { Get-NCLogRecord -Path $basic.FullName @P } |
                 Should -Throw -ErrorId 'InvalidRecordLayout,Get-NCLogRecord'
@@ -259,7 +292,7 @@ Describe 'Get-NCLogRecord' {
         It '2つの値が隣り合う (重ならない) レイアウトは読める' {
             $f = New-NCLogTestFile -Path (Join-Path $TestDrive 'adjacent.BIN') -RecordSize 16 `
                 -Value40Offset 6 -Value21Offset 8 -Records @(@{ V40 = 7; V21 = 8.5 })
-            $r = Get-NCLogRecord -Path $f.FullName -Value40Offset 6 -Value21Offset 8
+            $r = Get-NCLogRecord -Path $f.FullName -RecordSize 16 -Value40Offset 6 -Value21Offset 8
             $r.Value40 | Should -Be 7
             $r.Value21 | Should -Be 8.5
         }

@@ -6,7 +6,7 @@ BeforeAll {
     . (Join-Path $PSScriptRoot 'TestHelpers.ps1')
     Import-Module (Join-Path $PSScriptRoot '..' 'NCLogTools' 'NCLogTools.psd1') -Force
 
-    $script:log = New-NCLogTestFile -Path (Join-Path $TestDrive 'NCLog_viewer.BIN') -TrailingBytes 5 -Records @(
+    $script:log = New-NCLogTestFile -Path (Join-Path $TestDrive 'NCLog_viewer.BIN') @LegacyLayout -TrailingBytes 5 -Records @(
         @{ V40 = 10; V21 = 1000 }
         @{ V40 = 20; V21 = [double]::NaN }
         @{ V40 = 30; V21 = 3000 }

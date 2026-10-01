@@ -4,7 +4,7 @@
         NCLog ファイルの構造 (ヘッダー・レコード数・先頭レコードの生データ) を表示し、レイアウト検証を支援する。
 
     .DESCRIPTION
-        Get-NCLogRecord の既定レイアウト (ヘッダー 0x20 byte / 16 byte レコード / +4 が UInt16、+8 が Double)
+        Get-NCLogRecord の既定レイアウト (ヘッダーなし / 368 byte レコード / +328 が UInt16、+160 が Double)
         は実機のログで検証されていません。このコマンドは次の情報を返すので、制御装置の画面値や
         既知の加工条件と突き合わせてオフセットを確認できます。
 
@@ -24,10 +24,10 @@
         生データを表示するレコード数。既定 5。
 
     .PARAMETER HeaderSize
-        ヘッダーのバイト数 (仮定値)。既定 0x20 (32)。
+        ヘッダーのバイト数 (仮定値)。既定 0 (ヘッダーなし)。
 
     .PARAMETER RecordSize
-        1レコードのバイト数 (仮定値)。既定 16。4 の倍数である必要があります。
+        1レコードのバイト数 (仮定値)。既定 368。4 の倍数である必要があります。
 
     .INPUTS
         System.String, System.IO.FileInfo
@@ -72,11 +72,11 @@
         [int]$SampleCount = 5,
 
         [ValidateRange(0, 1MB)]
-        [int]$HeaderSize = 0x20,
+        [int]$HeaderSize = 0,
 
         [ValidateRange(8, 64KB)]
         [ValidateScript({ $_ % 4 -eq 0 }, ErrorMessage = 'RecordSize は 4 の倍数を指定してください: {0}')]
-        [int]$RecordSize = 16
+        [int]$RecordSize = 368
     )
 
     begin {
