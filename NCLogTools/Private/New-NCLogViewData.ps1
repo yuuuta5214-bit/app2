@@ -6,7 +6,10 @@
         ファイルを読み直さずにレイアウトだけ変えて再解析できるよう、バイト列を受け取る。
         レコードの扱いは Get-NCLogRecord と同じ:
         - 末尾の不完全なレコードは TrailingBytes として無視する
-        - Value40 / Value21 のどちらかが NaN / ±Infinity なら無効レコード (統計・CSV の対象外)
+        - 値の形式は NCLogRecordFormat.ps1 の定義どおり
+            Value40 = ADD_40_0: UInt16 (W)
+            Value21 = ADD_21_0: Double を 1000 で割った値 (mm/min)
+        - Value21 が NaN / ±Infinity なら無効レコード (統計・CSV の対象外)
         Plot40 / Plot21 はグラフ用で、無効値を直前の有効値 (先頭なら 0) で置き換えている。
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
@@ -26,47 +29,39 @@
     if (-not [System.BitConverter]::IsLittleEndian) {
         throw [System.PlatformNotSupportedException]::new('ビッグエンディアン環境はサポートしていません。')
     }
-    if ($RecordSize -le 0 -or $HeaderSize -lt 0 -or $Value40Offset -lt 0 -or $Value21Offset -lt 0 -or
-        $Value40Offset + 4 -gt $RecordSize -or $Value21Offset + 4 -gt $RecordSize) {
+    if ($RecordSize -le 0 -or $HeaderSize -lt 0) {
         throw [System.ArgumentException]::new('レコードレイアウトが不正です。')
+    }
+    $problem = Get-NCLogLayoutProblem -RecordSize $RecordSize -Value40Offset $Value40Offset -Value21Offset $Value21Offset
+    if ($null -ne $problem) {
+        throw [System.ArgumentException]::new("レコードレイアウトが不正です。$($problem.Message)")
     }
 
     $length = $Bytes.Length
-    $dataLength = [Math]::Max(0, $length - $HeaderSize)
-    $recordCount = [int][Math]::Floor($dataLength / $RecordSize)
-    $trailing = $dataLength % $RecordSize
+    $divisor = $script:NCLogValue21Divisor
 
-    $v40 = [float[]]::new($recordCount)
-    $v21 = [float[]]::new($recordCount)
-    $plot40 = [float[]]::new($recordCount)
-    $plot21 = [float[]]::new($recordCount)
-    $valid = [bool[]]::new($recordCount)
-    $invalid = 0
-    $last40 = [float]0
-    $last21 = [float]0
-
-    for ($i = 0; $i -lt $recordCount; $i++) {
-        $base = $HeaderSize + $i * $RecordSize
-        $a = [System.BitConverter]::ToSingle($Bytes, $base + $Value40Offset)
-        $b = [System.BitConverter]::ToSingle($Bytes, $base + $Value21Offset)
-        $v40[$i] = $a
-        $v21[$i] = $b
-        if ([float]::IsFinite($a) -and [float]::IsFinite($b)) {
-            $valid[$i] = $true
-            $last40 = $a
-            $last21 = $b
-        }
-        else {
-            $invalid++
-        }
-        $plot40[$i] = $last40
-        $plot21[$i] = $last21
+    if (Test-NCLogNative) {
+        # 高速版 (C#)。結果は下の PowerShell 版と同じ
+        $decoded = [NCLogToolsNative.V1.RecordDecoder]::Decode($Bytes, $HeaderSize, $RecordSize, $Value40Offset, $Value21Offset, $divisor)
+        $recordCount = $decoded.RecordCount
+        $trailing = $decoded.TrailingBytes
+        $invalid = $decoded.InvalidCount
+        $v40 = $decoded.Value40
+        $v21 = $decoded.Value21
+        $plot40 = $decoded.Plot40
+        $plot21 = $decoded.Plot21
+        $valid = $decoded.Valid
+    }
+    else {
+        $recordCount, $trailing, $invalid, $v40, $v21, $plot40, $plot21, $valid = ConvertFrom-NCLogViewByte `
+            -Bytes $Bytes -HeaderSize $HeaderSize -RecordSize $RecordSize -Value40Offset $Value40Offset `
+            -Value21Offset $Value21Offset -Divisor $divisor
     }
 
     $s40 = Measure-NCLogViewValue -Value $v40 -Valid $valid
     $s21 = Measure-NCLogViewValue -Value $v21 -Valid $valid
     $statistics = @(
-        [pscustomobject]@{ Parameter = 'ADD_40_0'; Description = 'レーザー出力パワー'; Unit = '%'
+        [pscustomobject]@{ Parameter = 'ADD_40_0'; Description = 'レーザー出力パワー'; Unit = 'W'
             Count = $s40.Count; Minimum = $s40.Minimum; Maximum = $s40.Maximum; Average = $s40.Average; StdDev = $s40.StdDev
         }
         [pscustomobject]@{ Parameter = 'ADD_21_0'; Description = 'ワイヤフィード速度'; Unit = 'mm/min'
@@ -98,14 +93,77 @@
         RecordSize    = $RecordSize
         Value40Offset = $Value40Offset
         Value21Offset = $Value21Offset
-        RecordCount   = $recordCount
+        RecordCount   = [int]$recordCount
         TrailingBytes = [int]$trailing
-        InvalidCount  = $invalid
+        InvalidCount  = [int]$invalid
         Value40       = $v40
         Value21       = $v21
         Plot40        = $plot40
         Plot21        = $plot21
+        # 有効レコード (ワイヤ速度が有限) なら $true。CSV 出力・統計の対象
+        Valid         = $valid
         Statistics    = $statistics
         HeaderWords   = $headerWords
     }
+}
+
+function ConvertFrom-NCLogViewByte {
+    <#
+    .SYNOPSIS
+        New-NCLogViewData の PowerShell 版の解析処理 (C# 版が使えないとき用)。
+    .OUTPUTS
+        RecordCount, TrailingBytes, InvalidCount, Value40, Value21, Plot40, Plot21, Valid の順に 8 つの値
+    #>
+    [CmdletBinding()]
+    [OutputType([object[]])]
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$Bytes,
+        [Parameter(Mandatory)][int]$HeaderSize,
+        [Parameter(Mandatory)][int]$RecordSize,
+        [Parameter(Mandatory)][int]$Value40Offset,
+        [Parameter(Mandatory)][int]$Value21Offset,
+        [Parameter(Mandatory)][double]$Divisor
+    )
+
+    $dataLength = [Math]::Max(0, $Bytes.Length - $HeaderSize)
+    $recordCount = [int][Math]::Floor($dataLength / $RecordSize)
+    $trailing = $dataLength % $RecordSize
+
+    $v40 = [double[]]::new($recordCount)
+    $v21 = [double[]]::new($recordCount)
+    $plot40 = [double[]]::new($recordCount)
+    $plot21 = [double[]]::new($recordCount)
+    $valid = [bool[]]::new($recordCount)
+    $invalid = 0
+    $last40 = 0.0
+    $last21 = 0.0
+
+    for ($i = 0; $i -lt $recordCount; $i++) {
+        $base = $HeaderSize + $i * $RecordSize
+        $a = [double][System.BitConverter]::ToUInt16($Bytes, $base + $Value40Offset)
+        $b = [System.BitConverter]::ToDouble($Bytes, $base + $Value21Offset) / $Divisor
+        $v40[$i] = $a
+        $v21[$i] = $b
+        # レーザー出力 (整数) は常に有効。ワイヤ速度が NaN / ±Infinity なら無効レコード
+        if ([double]::IsFinite($b)) {
+            $valid[$i] = $true
+            $last40 = $a
+            $last21 = $b
+        }
+        else {
+            $invalid++
+        }
+        $plot40[$i] = $last40
+        $plot21[$i] = $last21
+    }
+
+    # 配列がパイプラインで展開されないよう、カンマ演算子で1要素ずつ返す
+    $recordCount
+    $trailing
+    $invalid
+    , $v40
+    , $v21
+    , $plot40
+    , $plot21
+    , $valid
 }

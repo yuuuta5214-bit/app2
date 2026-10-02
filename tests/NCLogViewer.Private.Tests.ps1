@@ -6,9 +6,9 @@ BeforeAll {
     . (Join-Path $PSScriptRoot 'TestHelpers.ps1')
     Import-Module (Join-Path $PSScriptRoot '..' 'NCLogTools' 'NCLogTools.psd1') -Force
 
-    $script:log = New-NCLogTestFile -Path (Join-Path $TestDrive 'NCLog_viewer.BIN') -TrailingBytes 5 -Records @(
+    $script:log = New-NCLogTestFile -Path (Join-Path $TestDrive 'NCLog_viewer.BIN') @LegacyLayout -TrailingBytes 5 -Records @(
         @{ V40 = 10; V21 = 1000 }
-        @{ V40 = [single]::NaN; V21 = 2000 }
+        @{ V40 = 20; V21 = [double]::NaN }
         @{ V40 = 30; V21 = 3000 }
         @{ V40 = 20; V21 = [single]::PositiveInfinity }
     )
@@ -66,8 +66,9 @@ Describe 'New-NCLogViewData' {
 
     It '値はそのまま保持する (無効値も含む)' {
         $data.Value40[0] | Should -Be 10
-        [single]::IsNaN($data.Value40[1]) | Should -BeTrue
-        [single]::IsPositiveInfinity($data.Value21[3]) | Should -BeTrue
+        $data.Value40[1] | Should -Be 20
+        [double]::IsNaN($data.Value21[1]) | Should -BeTrue
+        [double]::IsPositiveInfinity($data.Value21[3]) | Should -BeTrue
     }
 
     It 'グラフ用の値は無効レコードを直前の有効値で置き換える' {
@@ -75,7 +76,21 @@ Describe 'New-NCLogViewData' {
         $data.Plot21 | Should -Be @(1000, 1000, 3000, 3000)
     }
 
-    It '統計は有効レコード (両方の値が有限) のみ。Measure-NCLogRecord と一致する' {
+    It 'ADD_40_0 は UInt16、ADD_21_0 は Double を 1000 で割った値として読む' {
+        $data.Value40 | Should -BeOfType [double]
+        $data.Value21[2] | Should -Be 3000
+        $bytes = [byte[]]::new(0x20 + 16)
+        [System.BitConverter]::GetBytes([uint16]65000).CopyTo($bytes, 0x20 + 4)
+        [System.BitConverter]::GetBytes([double]1500250).CopyTo($bytes, 0x20 + 8)
+        $one = InModuleScope NCLogTools -Parameters @{ B = $bytes } {
+            param($B)
+            New-NCLogViewData -Bytes $B -Path 'x.BIN' -HeaderSize 0x20 -RecordSize 16 -Value40Offset 4 -Value21Offset 8
+        }
+        $one.Value40[0] | Should -Be 65000
+        $one.Value21[0] | Should -Be 1500.25
+    }
+
+    It '統計は有効レコード (ワイヤ速度が有限) のみ。Measure-NCLogRecord と一致する' {
         $s40 = $data.Statistics | Where-Object Parameter -EQ 'ADD_40_0'
         $s40.Count | Should -Be 2
         $s40.Minimum | Should -Be 10
@@ -114,12 +129,12 @@ Describe 'New-NCLogViewData' {
     It '別のレイアウトで解析し直せる' {
         $other = InModuleScope NCLogTools -Parameters @{ Path = $log.FullName } {
             param($Path)
-            New-NCLogViewData -Bytes ([System.IO.File]::ReadAllBytes($Path)) -Path $Path -HeaderSize 0x20 -RecordSize 32 -Value40Offset 4 -Value21Offset 24
+            New-NCLogViewData -Bytes ([System.IO.File]::ReadAllBytes($Path)) -Path $Path -HeaderSize 0x20 -RecordSize 32 -Value40Offset 20 -Value21Offset 8
         }
         $other.RecordCount | Should -Be 2
         $other.TrailingBytes | Should -Be 5
-        $other.Value40[1] | Should -Be 30
-        $other.Value21[0] | Should -Be 2000
+        $other.Value40[0] | Should -Be 20
+        $other.Value21[1] | Should -Be 3000
     }
 
     It '不正なレイアウトは ArgumentException' {
@@ -391,10 +406,27 @@ Describe 'Resolve-NCLogViewerLayout' {
             } } | Should -Throw -ExceptionType ([System.ArgumentException]) -ExpectedMessage 'レコードサイズ は*'
     }
 
-    It 'オフセット + 4 byte がレコードを超えたら ArgumentException' {
+    It '値の領域 (ADD_40_0: 2 byte / ADD_21_0: 8 byte) がレコードを超えたら ArgumentException' {
         { InModuleScope NCLogTools {
-                Resolve-NCLogViewerLayout -HeaderSize '0' -RecordSize '16' -Value40Offset '4' -Value21Offset '13'
-            } } | Should -Throw -ExpectedMessage 'Value21Offset (13)*'
+                Resolve-NCLogViewerLayout -HeaderSize '0' -RecordSize '16' -Value40Offset '4' -Value21Offset '9'
+            } } | Should -Throw -ExceptionType ([System.ArgumentException]) -ExpectedMessage 'ADD_21_0 (Double) の位置 9 + 8 byte*'
+        { InModuleScope NCLogTools {
+                Resolve-NCLogViewerLayout -HeaderSize '0' -RecordSize '16' -Value40Offset '15' -Value21Offset '0'
+            } } | Should -Throw -ExceptionType ([System.ArgumentException]) -ExpectedMessage 'ADD_40_0 (UInt16) の位置 15 + 2 byte*'
+    }
+
+    It '2つの値の領域が重なったら ArgumentException' {
+        { InModuleScope NCLogTools {
+                Resolve-NCLogViewerLayout -HeaderSize '0' -RecordSize '16' -Value40Offset '10' -Value21Offset '8'
+            } } | Should -Throw -ExceptionType ([System.ArgumentException]) -ExpectedMessage '*重なっています*'
+    }
+
+    It '既定のレイアウト (+4 / +8 / 16 byte) は有効' {
+        $layout = InModuleScope NCLogTools {
+            Resolve-NCLogViewerLayout -HeaderSize '0x20' -RecordSize '16' -Value40Offset '4' -Value21Offset '8'
+        }
+        $layout.Value40Offset | Should -Be 4
+        $layout.Value21Offset | Should -Be 8
     }
 
     It '数値でなければ FormatException' {

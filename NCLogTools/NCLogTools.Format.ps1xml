@@ -10,7 +10,7 @@
         <TableHeaders>
           <TableColumnHeader><Label>File</Label></TableColumnHeader>
           <TableColumnHeader><Label>RecordNumber</Label><Alignment>Right</Alignment></TableColumnHeader>
-          <TableColumnHeader><Label>ADD_40_0 (%)</Label><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>ADD_40_0 (W)</Label><Alignment>Right</Alignment></TableColumnHeader>
           <TableColumnHeader><Label>ADD_21_0 (mm/min)</Label><Alignment>Right</Alignment></TableColumnHeader>
         </TableHeaders>
         <TableRowEntries>

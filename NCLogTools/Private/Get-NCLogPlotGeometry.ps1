@@ -16,7 +16,7 @@
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory)][AllowEmptyCollection()][float[]]$Value,
+        [Parameter(Mandatory)][AllowEmptyCollection()][double[]]$Value,
         [Parameter(Mandatory)][int]$Start,
         [Parameter(Mandatory)][int]$End,
         [Parameter(Mandatory)][ValidateRange(1, 100000)][double]$Width,
@@ -35,9 +35,17 @@
     if ($End -lt $Start) { return $empty }
 
     $n = $End - $Start + 1
-    $segment = [System.ArraySegment[float]]::new($Value, $Start, $n)
-    $min = if ($null -ne $Minimum) { [double]$Minimum } else { [double][System.Linq.Enumerable]::Min($segment) }
-    $max = if ($null -ne $Maximum) { [double]$Maximum } else { [double][System.Linq.Enumerable]::Max($segment) }
+    # 最小・最大は C# 版があればそれを使う (LINQ より大幅に速い。100 万点の描き直しで差が出る)
+    $native = Test-NCLogNative
+    $range = if ($native) {
+        [NCLogToolsNative.V1.RecordDecoder]::MinMax($Value, $Start, $n)
+    }
+    else {
+        $segment = [System.ArraySegment[double]]::new($Value, $Start, $n)
+        [double[]]@([System.Linq.Enumerable]::Min($segment), [System.Linq.Enumerable]::Max($segment))
+    }
+    $min = if ($null -ne $Minimum) { [double]$Minimum } else { [double]$range[0] }
+    $max = if ($null -ne $Maximum) { [double]$Maximum } else { [double]$range[1] }
     $span = $max - $min
     if ($span -gt 0 -and $Margin -gt 0) {
         if ($null -eq $Minimum) { $min -= $span * $Margin }
@@ -71,10 +79,18 @@
         for ($c = 0; $c -lt $columns; $c++) {
             $s = [int][Math]::Floor([double]$c * $n / $columns)
             $e = [int][Math]::Floor([double]($c + 1) * $n / $columns)
-            $bucket = [System.ArraySegment[float]]::new($Value, $Start + $s, [Math]::Max(1, $e - $s))
+            $bucketCount = [Math]::Max(1, $e - $s)
             $x = ($c + 0.5) / $columns * $Width
-            $lo = [System.Linq.Enumerable]::Min($bucket)
-            $hi = [System.Linq.Enumerable]::Max($bucket)
+            if ($native) {
+                $bucketRange = [NCLogToolsNative.V1.RecordDecoder]::MinMax($Value, $Start + $s, $bucketCount)
+                $lo = $bucketRange[0]
+                $hi = $bucketRange[1]
+            }
+            else {
+                $bucket = [System.ArraySegment[double]]::new($Value, $Start + $s, $bucketCount)
+                $lo = [System.Linq.Enumerable]::Min($bucket)
+                $hi = [System.Linq.Enumerable]::Max($bucket)
+            }
             $xs.Add($x); $ys.Add($(if ($scale -gt 0) { $Height - ($lo - $min) * $scale } else { $flatY }))
             $xs.Add($x); $ys.Add($(if ($scale -gt 0) { $Height - ($hi - $min) * $scale } else { $flatY }))
         }

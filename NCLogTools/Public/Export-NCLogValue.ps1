@@ -44,16 +44,16 @@
         出力ファイルの文字コード。既定 utf8BOM。
 
     .PARAMETER HeaderSize
-        ファイル先頭ヘッダーのバイト数。既定 0x20 (32)。
+        ファイル先頭ヘッダーのバイト数。既定 0 (ヘッダーなし)。
 
     .PARAMETER RecordSize
-        1レコードのバイト数。既定 16。
+        1レコードのバイト数。既定 368。
 
     .PARAMETER Value40Offset
-        レコード先頭から ADD_40_0 までのバイトオフセット。既定 4。
+        レコード先頭から ADD_40_0 までのバイトオフセット。既定 328。
 
     .PARAMETER Value21Offset
-        レコード先頭から ADD_21_0 までのバイトオフセット。既定 8。
+        レコード先頭から ADD_21_0 までのバイトオフセット。既定 160。
 
     .INPUTS
         System.String, System.IO.FileInfo
@@ -121,16 +121,16 @@
         [string]$Encoding = 'utf8BOM',
 
         [ValidateRange(0, 1MB)]
-        [int]$HeaderSize = 0x20,
+        [int]$HeaderSize = 0,
 
         [ValidateRange(8, 64KB)]
-        [int]$RecordSize = 16,
+        [int]$RecordSize = 368,
 
         [ValidateRange(0, 64KB)]
-        [int]$Value40Offset = 4,
+        [int]$Value40Offset = 328,
 
         [ValidateRange(0, 64KB)]
-        [int]$Value21Offset = 8
+        [int]$Value21Offset = 160
     )
 
     begin {

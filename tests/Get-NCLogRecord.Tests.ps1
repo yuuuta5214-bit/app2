@@ -4,17 +4,17 @@ BeforeAll {
     . (Join-Path $PSScriptRoot 'TestHelpers.ps1')
     Import-Module (Join-Path $PSScriptRoot '..' 'NCLogTools' 'NCLogTools.psd1') -Force
 
-    $nan = [single]::NaN
+    $nan = [double]::NaN
     $script:basic = New-NCLogTestFile -Path (Join-Path $TestDrive 'NCLog_basic.BIN') -Records @(
-        @{ V40 = 10.5; V21 = 1000 }
-        @{ V40 = 20.0; V21 = 2000 }
-        @{ V40 = 30.25; V21 = 3000 }
+        @{ V40 = 2000; V21 = 1000.5 }
+        @{ V40 = 1800; V21 = 900 }
+        @{ V40 = 1500; V21 = 812.25 }
     )
     $script:withNaN = New-NCLogTestFile -Path (Join-Path $TestDrive 'NCLog_nan.BIN') -Records @(
-        @{ V40 = 10.5; V21 = 1000 }
-        @{ V40 = $nan; V21 = 2000 }
-        @{ V40 = 30.25; V21 = 3000 }
-        @{ V40 = 40.0; V21 = 4000 }
+        @{ V40 = 2000; V21 = 1000.5 }
+        @{ V40 = 1800; V21 = $nan }
+        @{ V40 = 1500; V21 = 812.25 }
+        @{ V40 = 1000; V21 = 4000 }
     )
 }
 
@@ -33,16 +33,63 @@ Describe 'Get-NCLogRecord' {
 
         It 'Value40 / Value21 / RecordNumber / SourceFile を正しく読む' {
             $r = @(Get-NCLogRecord -Path $basic.FullName)
-            $r[2].Value40 | Should -Be 30.25
-            $r[2].Value21 | Should -Be 3000
+            $r[2].Value40 | Should -Be 1500
+            $r[2].Value21 | Should -Be 812.25
             $r[2].RecordNumber | Should -Be 2
             $r[2].SourceFile | Should -Be $basic.FullName
         }
 
-        It 'Value40 と Value21 は float32 (Single)' {
+        It 'Value40 は整数 (UInt16 を Int32 で返す)、Value21 は Double' {
             $r = Get-NCLogRecord -Path $basic.FullName -MaxRecords 1
-            $r.Value40 | Should -BeOfType [single]
-            $r.Value21 | Should -BeOfType [single]
+            $r.Value40 | Should -BeOfType [int]
+            $r.Value21 | Should -BeOfType [double]
+        }
+
+        It '既定 (実機ログ): ヘッダーなし・368 byte、ADD_40_0 は +328 の UInt16、ADD_21_0 は +160 の Double を 1000 で割った値' {
+            $bytes = [byte[]]::new(368)
+            [System.BitConverter]::GetBytes([uint16]65535).CopyTo($bytes, 328)
+            # +330～+331 はレーザー出力に含まれない (UInt16 の範囲外の値で確認する)
+            $bytes[330] = 0xFF
+            $bytes[331] = 0xFF
+            [System.BitConverter]::GetBytes([double]1234567).CopyTo($bytes, 160)
+            $raw = Join-Path $TestDrive 'NCLog_raw.BIN'
+            [System.IO.File]::WriteAllBytes($raw, $bytes)
+
+            $r = Get-NCLogRecord -Path $raw
+            $r.Value40 | Should -Be 65535
+            $r.Value21 | Should -Be 1234.567
+        }
+
+        It '実機ログと同じ構造のファイルを既定のレイアウトで正しく読む (指令値ではなく実測値を読む)' {
+            # 実機ログ NCLog_00000000_00001888.BIN の構造を再現する (値は合成):
+            #   368 byte/レコード・ヘッダーなし、+0 レコード番号、+152 ワイヤ指令 (Double ×1000)、
+            #   +160 実ワイヤ速度 (Double ×1000)、+320 レーザー指令 (UInt16)、+328 実レーザー出力 (UInt16)
+            $count = 40
+            $bytes = [byte[]]::new($count * 368)
+            for ($i = 0; $i -lt $count; $i++) {
+                $o = $i * 368
+                $on = $i -ge 10 -and $i -lt 30
+                [System.BitConverter]::GetBytes([int]$i).CopyTo($bytes, $o)
+                [System.BitConverter]::GetBytes([double]$(if ($on) { 1900000 } else { 0 })).CopyTo($bytes, $o + 152)
+                [System.BitConverter]::GetBytes([double]$(if ($on) { 1900000 + ($i % 5 - 2) * 8000 } else { 1181 })).CopyTo($bytes, $o + 160)
+                [System.BitConverter]::GetBytes([uint16]$(if ($on) { 2000 } else { 0 })).CopyTo($bytes, $o + 320)
+                [System.BitConverter]::GetBytes([uint16]$(if ($on) { 1999 + $i % 3 } else { 53 })).CopyTo($bytes, $o + 328)
+            }
+            $real = Join-Path $TestDrive 'NCLog_00000000_00000039.BIN'
+            [System.IO.File]::WriteAllBytes($real, $bytes)
+
+            $r = @(Get-NCLogRecord -Path $real)
+            $r.Count | Should -Be $count
+            $r[0].Value40 | Should -Be 53
+            $r[0].Value21 | Should -Be 1.181
+            $r[12].Value40 | Should -Be 1999
+            $r[12].Value21 | Should -Be 1900
+            $r[13].Value40 | Should -Be 2000
+            $r[13].Value21 | Should -Be 1908
+            $on = $r | Where-Object { $_.RecordNumber -ge 10 -and $_.RecordNumber -lt 30 }
+            ($on.Value40 | Measure-Object -Average).Average | Should -BeGreaterThan 1998
+            ($on.Value21 | Measure-Object -Average).Average | Should -BeGreaterThan 1890
+            (Get-NCLogFileInfo -Path $real).TrailingBytes | Should -Be 0
         }
 
         It '-FilePath 別名を受け付ける (v1.0 互換)' {
@@ -54,36 +101,36 @@ Describe 'Get-NCLogRecord' {
             $count = 65536 + 3
             $bytes = [byte[]]::new(0x20 + $count * 16)
             for ($i = 0; $i -lt $count; $i++) {
-                [System.BitConverter]::GetBytes([single]$i).CopyTo($bytes, 0x20 + $i * 16 + 4)
-                [System.BitConverter]::GetBytes([single]($i * 2)).CopyTo($bytes, 0x20 + $i * 16 + 8)
+                [System.BitConverter]::GetBytes([uint16]($i % 65536)).CopyTo($bytes, 0x20 + $i * 16 + 4)
+                [System.BitConverter]::GetBytes([double]($i * 2 * 1000)).CopyTo($bytes, 0x20 + $i * 16 + 8)
             }
             $big = Join-Path $TestDrive 'NCLog_big.BIN'
             [System.IO.File]::WriteAllBytes($big, $bytes)
 
-            $r = @(Get-NCLogRecord -Path $big)
+            $r = @(Get-NCLogRecord -Path $big @LegacyLayout)
             $r.Count | Should -Be $count
             $r[65535].Value40 | Should -Be 65535
-            $r[65536].Value40 | Should -Be 65536
+            $r[65536].Value40 | Should -Be 0
             $r[65536].Value21 | Should -Be 131072
             $r[-1].RecordNumber | Should -Be ($count - 1)
         }
     }
 
     Context '無効値の扱い (v1.0 の列ずれ不具合の回帰テスト)' {
-        It 'ADD_40_0 が NaN のレコードはレコードごと除外され、対応がずれない' {
+        It 'ADD_21_0 が NaN のレコードはレコードごと除外され、対応がずれない' {
             $r = @(Get-NCLogRecord -Path $withNaN.FullName)
             $r.Count | Should -Be 3
             $r.RecordNumber | Should -Be @(0, 2, 3)
-            $r[1].Value40 | Should -Be 30.25
-            $r[1].Value21 | Should -Be 3000
-            $r[2].Value40 | Should -Be 40
+            $r[1].Value40 | Should -Be 1500
+            $r[1].Value21 | Should -Be 812.25
+            $r[2].Value40 | Should -Be 1000
             $r[2].Value21 | Should -Be 4000
         }
 
         It '<Name> を含むレコードを除外する' -ForEach @(
-            @{ Name = 'ADD_21_0 = NaN'; V40 = 1.0; V21 = [single]::NaN }
-            @{ Name = 'ADD_40_0 = +Infinity'; V40 = [single]::PositiveInfinity; V21 = 1.0 }
-            @{ Name = 'ADD_21_0 = -Infinity'; V40 = 1.0; V21 = [single]::NegativeInfinity }
+            @{ Name = 'ADD_21_0 = NaN'; V40 = 1; V21 = [double]::NaN }
+            @{ Name = 'ADD_21_0 = +Infinity'; V40 = 1; V21 = [double]::PositiveInfinity }
+            @{ Name = 'ADD_21_0 = -Infinity'; V40 = 1; V21 = [double]::NegativeInfinity }
         ) {
             $f = New-NCLogTestFile -Path (Join-Path $TestDrive "inv_$([guid]::NewGuid()).BIN") -Records @(
                 @{ V40 = 5; V21 = 50 }
@@ -216,19 +263,38 @@ Describe 'Get-NCLogRecord' {
 
     Context 'レイアウト指定' {
         It 'HeaderSize / RecordSize / オフセットを変更して読める' {
-            $f = New-NCLogTestFile -Path (Join-Path $TestDrive 'layout.BIN') -HeaderSize 64 -RecordSize 24 `
-                -Value40Offset 12 -Value21Offset 20 -Records @(
+            $f = New-NCLogTestFile -Path (Join-Path $TestDrive 'layout.BIN') -HeaderSize 64 -RecordSize 32 `
+                -Value40Offset 12 -Value21Offset 24 -Records @(
                 @{ V40 = 11; V21 = 22 }
                 @{ V40 = 33; V21 = 44 }
             )
-            $r = @(Get-NCLogRecord -Path $f.FullName -HeaderSize 64 -RecordSize 24 -Value40Offset 12 -Value21Offset 20)
+            $r = @(Get-NCLogRecord -Path $f.FullName -HeaderSize 64 -RecordSize 32 -Value40Offset 12 -Value21Offset 24)
             $r.Value40 | Should -Be @(11, 33)
             $r.Value21 | Should -Be @(22, 44)
         }
 
-        It 'オフセットがレコードからはみ出す場合は InvalidRecordLayout で終了する' {
-            { Get-NCLogRecord -Path $basic.FullName -Value21Offset 14 } |
+        It 'オフセットがレコードからはみ出す場合は InvalidRecordLayout で終了する: <Name>' -ForEach @(
+            @{ Name = 'ADD_21_0 (8 byte) が +9～+16'; P = @{ RecordSize = 16; Value40Offset = 4; Value21Offset = 9 } }
+            @{ Name = 'ADD_40_0 (2 byte) が +15～+16'; P = @{ RecordSize = 16; Value40Offset = 15; Value21Offset = 0 } }
+            @{ Name = 'ADD_40_0 (2 byte) が +367～+368'; P = @{ Value40Offset = 367 } }
+        ) {
+            { Get-NCLogRecord -Path $basic.FullName @P } |
                 Should -Throw -ErrorId 'InvalidRecordLayout,Get-NCLogRecord'
+        }
+
+        It 'ADD_40_0 と ADD_21_0 の位置が重なる場合は InvalidRecordLayout で終了する' {
+            { Get-NCLogRecord -Path $basic.FullName -Value40Offset 8 -Value21Offset 8 } |
+                Should -Throw -ErrorId 'InvalidRecordLayout,Get-NCLogRecord' -ExpectedMessage '*重なっています*'
+            { Get-NCLogRecord -Path $basic.FullName -Value40Offset 14 -Value21Offset 8 } |
+                Should -Throw -ErrorId 'InvalidRecordLayout,Get-NCLogRecord'
+        }
+
+        It '2つの値が隣り合う (重ならない) レイアウトは読める' {
+            $f = New-NCLogTestFile -Path (Join-Path $TestDrive 'adjacent.BIN') -RecordSize 16 `
+                -Value40Offset 6 -Value21Offset 8 -Records @(@{ V40 = 7; V21 = 8.5 })
+            $r = Get-NCLogRecord -Path $f.FullName -RecordSize 16 -Value40Offset 6 -Value21Offset 8
+            $r.Value40 | Should -Be 7
+            $r.Value21 | Should -Be 8.5
         }
     }
 

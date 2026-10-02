@@ -9,7 +9,9 @@ function New-NCLogTestFile {
     .PARAMETER Path
         生成するファイルのパス。
     .PARAMETER Records
-        @{ V40 = <single>; V21 = <single> } の配列。1要素が1レコード。
+        @{ V40 = <UInt16 の W>; V21 = <mm/min> } の配列。1要素が1レコード。
+        実機の形式どおり、V40 は UInt16 (2 byte)、V21 は 1000 倍した Double (8 byte) で書き込む。
+        V21 に NaN / Infinity を指定すると無効レコードになる。
     .PARAMETER HeaderSize
         ヘッダーのバイト数 (0xAB で埋める)。
     .PARAMETER RecordSize
@@ -28,10 +30,11 @@ function New-NCLogTestFile {
     param(
         [Parameter(Mandatory)][string]$Path,
         [AllowEmptyCollection()][hashtable[]]$Records = @(),
-        [int]$HeaderSize = 0x20,
-        [int]$RecordSize = 16,
-        [int]$Value40Offset = 4,
-        [int]$Value21Offset = 8,
+        # 既定は実機ログのレイアウト (ヘッダーなし / 368 byte / +328 / +160)
+        [int]$HeaderSize = 0,
+        [int]$RecordSize = 368,
+        [int]$Value40Offset = 328,
+        [int]$Value21Offset = 160,
         [int]$TrailingBytes = 0
     )
 
@@ -44,11 +47,15 @@ function New-NCLogTestFile {
         if ($RecordSize -ge 4 -and $Value40Offset -ge 4 -and $Value21Offset -ge 4) {
             [System.BitConverter]::GetBytes([int]$i).CopyTo($bytes, $base)
         }
-        [System.BitConverter]::GetBytes([single]$Records[$i].V40).CopyTo($bytes, $base + $Value40Offset)
-        [System.BitConverter]::GetBytes([single]$Records[$i].V21).CopyTo($bytes, $base + $Value21Offset)
+        [System.BitConverter]::GetBytes([uint16]$Records[$i].V40).CopyTo($bytes, $base + $Value40Offset)
+        [System.BitConverter]::GetBytes([double]$Records[$i].V21 * 1000.0).CopyTo($bytes, $base + $Value21Offset)
     }
 
     $full = [System.IO.Path]::GetFullPath($Path)
     [System.IO.File]::WriteAllBytes($full, $bytes)
     Get-Item -LiteralPath $full
 }
+
+# 以前の仮のレイアウト (ヘッダー 0x20 / 16 byte / +4 / +8)。レイアウト指定や16進表示など、
+# 小さなデータで仕組みを確認するテストで使う:  New-NCLogTestFile ... @LegacyLayout
+$script:LegacyLayout = @{ HeaderSize = 0x20; RecordSize = 16; Value40Offset = 4; Value21Offset = 8 }

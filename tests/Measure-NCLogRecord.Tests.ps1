@@ -40,6 +40,7 @@ Describe 'Measure-NCLogRecord' {
 
         $s21.Average | Should -Be 500
         $s21.Unit | Should -Be 'mm/min'
+        $s40.Unit | Should -Be 'W'
         $s40.PSObject.TypeNames | Should -Contain 'NCLog.Statistic'
     }
 

@@ -4,9 +4,9 @@ BeforeAll {
     . (Join-Path $PSScriptRoot 'TestHelpers.ps1')
     $script:wrapper = Join-Path $PSScriptRoot '..' 'Export-NCLogValues.ps1'
     $script:log = New-NCLogTestFile -Path (Join-Path $TestDrive 'NCLog_wrap.BIN') -Records @(
-        @{ V40 = 10.5; V21 = 1000 }
-        @{ V40 = [single]::NaN; V21 = 2000 }
-        @{ V40 = 30.25; V21 = 3000 }
+        @{ V40 = 2000; V21 = 1000.5 }
+        @{ V40 = 1800; V21 = [double]::NaN }
+        @{ V40 = 1500; V21 = 812.25 }
     )
 }
 
@@ -17,7 +17,7 @@ AfterAll {
 Describe 'Export-NCLogValues.ps1 (互換ラッパー)' {
 
     It 'v1.0 と同じ -FilePath 指定で動く' {
-        & $wrapper -FilePath $log.FullName -Format Raw | Should -Be @('0,10.5,1000', '2,30.25,3000')
+        & $wrapper -FilePath $log.FullName -Format Raw | Should -Be @('0,2000,1000.5', '2,1500,812.25')
     }
 
     It 'モジュールの Export-NCLogValue と同じ結果を返す' {

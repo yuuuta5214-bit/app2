@@ -7,14 +7,16 @@
         ワイヤレーザー3Dプリンターの NCLog バイナリファイルを先頭からストリームで読み、
         1レコードごとに次の2値を「ペアのまま」NCLog.Record オブジェクトとして出力します。
 
-        - Value40 = ADD_40_0: amPrcLg_output_pwr (実レーザー出力パワー %)
+        - Value40 = ADD_40_0: amPrcLg_output_pwr (実レーザー出力パワー W)
         - Value21 = ADD_21_0: realWirFeed_vel    (実ワイヤフィード速度 mm/min)
 
         既定のバイナリレイアウト (Get-NCLogFileInfo で実ファイルを確認してください):
-            [Header 0x20 byte][Record 16 byte][Record 16 byte]...
-            Record 内: +4 = ADD_40_0 (float32 LE), +8 = ADD_21_0 (float32 LE)
+            [Record 368 byte][Record 368 byte]...  (ヘッダーなし。実機ログ NCLog_*.BIN で確認済み)
+            Record 内: +0   = レコード番号 (Int32)
+                       +160 = ADD_21_0 (Double LE, 8 byte。1000 で割った値が mm/min)
+                       +328 = ADD_40_0 (UInt16 LE, 2 byte。値はそのまま W)
 
-        どちらか一方でも NaN / ±Infinity のレコードはレコードごと除外するため、
+        ADD_21_0 が NaN / ±Infinity のレコードはレコードごと除外するため、
         2値の対応がずれることはありません。RecordNumber はファイル内の実レコード番号 (0 始まり) です。
 
         オブジェクトは読み込みながら逐次出力されるため、Select-Object -First などで
@@ -34,16 +36,16 @@
         出力する最大レコード数 (全ファイル合計)。既定: 無制限
 
     .PARAMETER HeaderSize
-        ファイル先頭ヘッダーのバイト数。既定 0x20 (32)。
+        ファイル先頭ヘッダーのバイト数。既定 0 (ヘッダーなし)。
 
     .PARAMETER RecordSize
-        1レコードのバイト数。既定 16。
+        1レコードのバイト数。既定 368。
 
     .PARAMETER Value40Offset
-        レコード先頭から ADD_40_0 までのバイトオフセット。既定 4。
+        レコード先頭から ADD_40_0 (UInt16 2 byte) までのバイトオフセット。既定 328。
 
     .PARAMETER Value21Offset
-        レコード先頭から ADD_21_0 までのバイトオフセット。既定 8。
+        レコード先頭から ADD_21_0 (Double 8 byte) までのバイトオフセット。既定 160。
 
     .INPUTS
         System.String, System.IO.FileInfo
@@ -58,9 +60,9 @@
 
     .EXAMPLE
         Get-ChildItem 'C:\Logs' -Filter 'NCLog*.BIN' | Get-NCLogRecord -HideZeros |
-            Where-Object Value40 -gt 50
+            Where-Object Value40 -gt 1000
 
-        フォルダ内の全ログから、レーザー出力 50% 超のレコードを抽出します。
+        フォルダ内の全ログから、レーザー出力 1000 W 超のレコードを抽出します。
 
     .EXAMPLE
         Get-NCLogRecord 'C:\Logs\NCLog_*.BIN' | Select-Object -First 100
@@ -98,16 +100,16 @@
         [long]$MaxRecords = [long]::MaxValue,
 
         [ValidateRange(0, 1MB)]
-        [int]$HeaderSize = 0x20,
+        [int]$HeaderSize = 0,
 
         [ValidateRange(8, 64KB)]
-        [int]$RecordSize = 16,
+        [int]$RecordSize = 368,
 
         [ValidateRange(0, 64KB)]
-        [int]$Value40Offset = 4,
+        [int]$Value40Offset = 328,
 
         [ValidateRange(0, 64KB)]
-        [int]$Value21Offset = 8
+        [int]$Value21Offset = 160
     )
 
     begin {
@@ -153,6 +155,7 @@
                 [void]$stream.Seek($HeaderSize, [System.IO.SeekOrigin]::Begin)
                 $skipped = 0L
                 $i = 0L
+                $divisor = $script:NCLogValue21Divisor
 
                 while ($i -lt $recordCount -and $emitted -lt $MaxRecords) {
                     $inChunk = [int][Math]::Min($chunkRecords, $recordCount - $i)
@@ -163,11 +166,12 @@
                         $recordNumber = $i
                         $i++
 
-                        $v40 = [System.BitConverter]::ToSingle($buffer, $base + $Value40Offset)
-                        $v21 = [System.BitConverter]::ToSingle($buffer, $base + $Value21Offset)
+                        # 形式は NCLogRecordFormat.ps1 の定義どおり (UInt16 / Double ÷ 1000)
+                        $v40 = [int][System.BitConverter]::ToUInt16($buffer, $base + $Value40Offset)
+                        $v21 = [System.BitConverter]::ToDouble($buffer, $base + $Value21Offset) / $divisor
 
-                        # 片方でも無効ならレコードごと捨てる (列ずれ防止)
-                        if (-not ([float]::IsFinite($v40) -and [float]::IsFinite($v21))) {
+                        # ワイヤ速度が無効ならレコードごと捨てる (列ずれ防止)
+                        if (-not [double]::IsFinite($v21)) {
                             $skipped++
                             continue
                         }
